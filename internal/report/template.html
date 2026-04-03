@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{.Talker}} 聊天记录分析报告</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         color: #333; background: #f0f0f0; line-height: 1.6; }
+  .container { max-width: 960px; margin: 0 auto; padding: 20px; }
+
+  /* 头部 */
+  .header { text-align: center; margin-bottom: 40px; padding: 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white; border-radius: 10px; }
+  .header h1 { font-size: 24px; margin-bottom: 10px; }
+  .header p  { font-size: 16px; opacity: .9; }
+  .period { font-size: 14px; opacity: .8; margin-top: 8px; }
+
+  /* 卡片 */
+  .card { background: white; padding: 24px; border-radius: 10px;
+          margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,.05); }
+  .card h2 { font-size: 18px; color: #444; margin-bottom: 16px;
+             display: flex; align-items: center; gap: 8px; }
+
+  /* 统计数据 */
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                gap: 16px; margin-top: 20px; }
+  .stat-item { text-align: center; padding: 16px; background: #f8f9fa;
+               border-radius: 8px; }
+  .stat-number { font-size: 28px; font-weight: bold; color: #667eea; }
+  .stat-label { font-size: 12px; color: #999; margin-top: 4px; }
+
+  /* 图表容器 */
+  .chart { height: 320px; margin: 16px 0; }
+  .small-chart { height: 280px; }
+
+  /* 人格分析 */
+  .tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .tag { padding: 4px 12px; background: #f0f0f0; border-radius: 20px;
+         font-size: 12px; color: #666; }
+  .ai-result { line-height: 1.8; margin-top: 12px; font-size: 15px; }
+  .ai-result strong { color: #667eea; }
+  .topic-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                gap: 8px; margin-top: 12px; }
+  .topic-item { padding: 10px 16px; background: linear-gradient(45deg, #fff 0%, #f5f5f5 100%);
+                border-radius: 8px; border-left: 4px solid #667eea; }
+
+  /* 底部 */
+  .footer { text-align: center; margin-top: 40px; color: #999; font-size: 14px;
+            padding: 20px; background: rgba(0,0,0,.03); border-radius: 10px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>💬 {{.Talker}} 聊天记录分析报告</h1>
+    <p>共 {{.Stats.Total}} 条消息 · 统计日期：{{.Today}}</p>
+    <div class="period">记录周期：{{.StartDate}} 至 {{.EndDate}}</div>
+  </div>
+
+  <!-- 统计概览 -->
+  <div class="card">
+    <h2>📊 基础统计</h2>
+    <div class="stats-grid">
+      <div class="stat-item">
+        <div class="stat-number">{{.Stats.Total}}</div>
+        <div class="stat-label">总消息数</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-number">{{.Stats.AvgLength | toFixed 1}}</div>
+        <div class="stat-label">平均长度</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-number">{{.Stats.MsgPerDay | toFixed 1}}</div>
+        <div class="stat-label">日均消息</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-number">{{.Stats.SentRatio | toFixed 1}}%</div>
+        <div class="stat-label">我的消息占比</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 发送比例 -->
+  <div class="card">
+    <h2>💬 消息分布</h2>
+    <div id="msgPie" class="chart small-chart"></div>
+  </div>
+
+  <!-- 活跃时段 -->
+  <div class="card">
+    <h2>⏰ 活跃时段</h2>
+    <div id="hourBar" class="chart small-chart"></div>
+  </div>
+
+  <!-- AI 人格分析 -->
+  {{if .AIResult}}
+  <div class="card">
+    <h2>🎭 AI 人格画像</h2>
+    <h3 style="font-size: 20px; margin-bottom: 12px;">{{.AIResult.Title}}</h3>
+    <div class="tags">
+      {{range .AIResult.PersonalityTags}}
+      <span class="tag">#{{.}}</span>
+      {{end}}
+    </div>
+    <div class="ai-result">
+      <strong>人格类型：</strong>{{.AIResult.Archetype}}<br><br>
+      <strong>人格画像：</strong>{{.AIResult.Personality}}<br><br>
+      <strong>关系分析：</strong>{{.AIResult.Relationship}}<br><br>
+      <strong>常聊话题：</strong>
+      <div class="topic-list">
+        {{range .AIResult.Topics}}
+        <div class="topic-item">{{.}}</div>
+        {{end}}
+      </div>
+      <br><strong>总结：</strong>{{.AIResult.Summary}}
+    </div>
+  </div>
+  {{end}}
+
+  <!-- 长消息列表 -->
+  {{if .Stats.TopMessages}}
+  <div class="card">
+    <h2>📜 最长大消息</h2>
+    <div style="margin-top: 16px; font-size: 15px;">
+      {{range $index, $msg := .Stats.TopMessages}}
+      <div style="padding: 10px; border: 1px solid #eee; border-radius: 8px; margin-bottom: 8px;">
+        <div style="color: #667eea; font-weight: bold;">{{if $msg.IsSender}}我{{else}}对方{{end}}（{{$msg.Length}}字）</div>
+        <div style="margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{$msg.Content}}</div>
+      </div>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+
+  <div class="footer">
+    <p>Generated by wechat-analyzer 🤖</p>
+    <p>Exported: {{.ExportedAt}}</p>
+  </div>
+</div>
+
+<script>
+// 饼图 - 发送比例
+var msgPieChart = echarts.init(document.getElementById('msgPie'));
+msgPieChart.setOption({
+  tooltip: { trigger: 'item' },
+  series: [{
+    name: '消息分布',
+    type: 'pie',
+    radius: '70%',
+    data: [
+      { value: {{.Stats.SentTotal}}, name: '我发的', itemStyle: { color: '#667eea' } },
+      { value: {{.Stats.ReceivedTotal}}, name: '收到的', itemStyle: { color: '#f093fb' } }
+    ],
+    label: { show: true, formatter: '{b} ({d}%)' }
+  }]
+});
+
+// 柱状图 - 活跃时段
+var hourBarChart = echarts.init(document.getElementById('hourBar'));
+hourBarChart.setOption({
+  tooltip: { trigger: 'axis' },
+  xAxis: { type: 'category', data: {{.HourLabels}} },
+  yAxis: { type: 'value' },
+  series: [{
+    data: {{.Stats.MsgPerHour}},
+    type: 'bar', smooth: true,
+    itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+      { offset: 0, color: '#667eea' }, { offset: 1, color: '#764ba2' }
+    ]) }
+  }]
+});
+
+window.onresize = function() {
+  msgPieChart.resize();
+  hourBarChart.resize();
+};
+</script>
+</body>
+</html>
