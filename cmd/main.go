@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/superShen0916/wechat-analyzer/internal/ai"
 	"github.com/superShen0916/wechat-analyzer/internal/loader"
@@ -27,6 +28,37 @@ var rootCmd = &cobra.Command{
   zhipu      - 智谱 GLM
   anthropic  - Claude
 `,
+}
+
+// 颜色配置
+var (
+	colorTitle    = color.New(color.FgHiCyan, color.Bold)
+	colorStatName = color.New(color.FgHiBlue)
+	colorStatVal  = color.New(color.FgHiGreen)
+	colorLabel    = color.New(color.FgHiYellow)
+	colorError    = color.New(color.FgHiRed)
+	colorSuccess  = color.New(color.FgGreen)
+	colorInfo     = color.New(color.FgCyan)
+)
+
+// 打印分隔线
+func printDivider(char string, length int) {
+	fmt.Println(colorLabel.Sprint(strings.Repeat(char, length)))
+}
+
+// 打印带标题的区块
+func printBlock(title string, maxWidth int) {
+	printDivider("═", maxWidth)
+	colorTitle.Printf(" %s ", title)
+	fmt.Println()
+	printDivider("═", maxWidth)
+}
+
+// 打印统计项
+func printStat(name string, value string) {
+	colorStatName.Printf("%20s:", name)
+	colorStatVal.Printf(" %8s", value)
+	fmt.Println()
 }
 
 // ── stats 命令 ────────────────────────────────────────────────────────────────
@@ -50,7 +82,7 @@ var statsCmd = &cobra.Command{
 			}
 
 			walkPath(path, func(conv *loader.Conversation) error {
-				fmt.Printf("\n🔍 分析: %s (%d 条消息)\n", conv.Talker.DisplayName(), len(conv.Messages))
+				colorInfo.Printf("\n🔍 分析: %s (%d 条消息)\n\n", conv.Talker.DisplayName(), len(conv.Messages))
 
 				// 统计分析
 				s, err := stats.AnalyzeConversation(conv)
@@ -60,7 +92,7 @@ var statsCmd = &cobra.Command{
 				}
 
 				// 打印到终端
-				s.Print(conv)
+				printStats(s, conv)
 
 				// 生成 HTML 报告
 				if html {
@@ -84,6 +116,56 @@ var statsCmd = &cobra.Command{
 
 		return nil
 	},
+}
+
+func printStats(s *stats.Stats, conv *loader.Conversation) {
+	width := 60
+	printBlock(fmt.Sprintf("📊 聊天记录统计 (%s)", conv.Talker.DisplayName()), width)
+
+	printStat("总消息数", fmt.Sprintf("%d 条", s.Total))
+	printStat("平均每条长度", fmt.Sprintf("%.2f 字符", s.AvgLength))
+	printStat("日均消息数", fmt.Sprintf("%.2f 条/天", s.MsgPerDay))
+	fmt.Println()
+
+	printStat("我发的消息", fmt.Sprintf("%d (%.1f%%)", s.SentTotal, s.SentRatio))
+	printStat("对方发的", fmt.Sprintf("%d (%.1f%%)", s.ReceivedTotal, 100-s.SentRatio))
+	printStat("我先开口", fmt.Sprintf("%d (%.1f%%)", s.FirstMessageCount, s.FirstMessageRatio))
+	fmt.Println()
+
+	colorLabel.Println("⏰ 活跃时段分布:")
+	var peakHours []int
+	for hour := 0; hour < 24; hour++ {
+		if s.MsgPerHour[hour] > 0 {
+			peakHours = append(peakHours, hour)
+		}
+	}
+
+	// 按消息数排序并取前5个
+	func() {
+		max := 5
+		if len(peakHours) > max {
+			peakHours = peakHours[:max]
+		}
+	}()
+
+	if len(peakHours) > 0 {
+		maxCount := s.MsgPerHour[peakHours[0]]
+		for _, h := range peakHours {
+			count := s.MsgPerHour[h]
+			// 计算长度，最长 20 个方块
+			barLen := count * 20 / maxCount
+			bar := strings.Repeat("█", barLen)
+			colorStatVal.Printf("  %02d点%02d → %d条 %s\n", h, h+1, count, bar)
+		}
+		fmt.Println()
+	}
+
+	colorLabel.Println("💬 消息类型分布:")
+	for t, cnt := range s.MsgTypes {
+		p := float64(cnt) / float64(s.Total) * 100
+		colorStatVal.Printf("  %-10s: %d (%.1f%%)\n", t, cnt, p)
+	}
+	fmt.Println()
 }
 
 // ── analyze 命令 ──────────────────────────────────────────────────────────────
@@ -132,7 +214,7 @@ var analyzeCmd = &cobra.Command{
 			}
 
 			walkPath(path, func(conv *loader.Conversation) error {
-				fmt.Printf("\n🤖 AI 分析 %s (%d 条消息)...\n\n", conv.Talker.DisplayName(), len(conv.Messages))
+				colorInfo.Printf("\n🤖 AI 分析 %s (%d 条消息)...\n\n", conv.Talker.DisplayName(), len(conv.Messages))
 
 				// 先做基础统计
 				s, err := stats.AnalyzeConversation(conv)
@@ -149,17 +231,7 @@ var analyzeCmd = &cobra.Command{
 				}
 
 				// 打印 AI 结果
-				fmt.Println(strings.Repeat("=", 70))
-				fmt.Printf("🎭 AI 分析结果\n")
-				fmt.Println(strings.Repeat("=", 70))
-				fmt.Printf("人格称号：%s\n", aiRes.Title)
-				fmt.Printf("人格类型：%s\n", aiRes.Archetype)
-				fmt.Printf("人格标签：#%s\n\n", strings.Join(aiRes.PersonalityTags, " #"))
-				fmt.Printf("人格画像：\n  %s\n\n", aiRes.Personality)
-				fmt.Printf("关系分析：\n  %s\n\n", aiRes.Relationship)
-				fmt.Printf("常聊话题：\n  %s\n\n", strings.Join(aiRes.Topics, "\n  "))
-				fmt.Printf("一句话总结：\n  %s\n", aiRes.Summary)
-				fmt.Println(strings.Repeat("=", 70))
+				printAIResult(aiRes)
 
 				// 生成 HTML 报告
 				if html {
@@ -183,6 +255,42 @@ var analyzeCmd = &cobra.Command{
 
 		return nil
 	},
+}
+
+func printAIResult(res *ai.AnalysisResult) {
+	width := 65
+	printBlock("🎭 AI 人格画像", width)
+
+	colorLabel.Println("人格称号:")
+	fmt.Printf("  %s\n\n", res.Title)
+
+	colorLabel.Println("人格类型:")
+	fmt.Printf("  %s\n\n", res.Archetype)
+
+	colorLabel.Println("人格标签:")
+	for i, tag := range res.PersonalityTags {
+		if i > 0 {
+			fmt.Print("  ")
+		}
+		colorSuccess.Printf("#%s ", tag)
+	}
+	fmt.Println("\n")
+
+	colorLabel.Println("人格画像:")
+	fmt.Printf("  %s\n\n", res.Personality)
+
+	colorLabel.Println("关系分析:")
+	fmt.Printf("  %s\n\n", res.Relationship)
+
+	colorLabel.Println("常聊话题:")
+	for _, topic := range res.Topics {
+		colorStatVal.Printf("  • %s\n", topic)
+	}
+	fmt.Println()
+
+	colorLabel.Println("一句话总结:")
+	colorStatName.Printf("  %s\n", res.Summary)
+	colorLabel.Println(strings.Repeat("═", width))
 }
 
 // ── providers 命令 ────────────────────────────────────────────────────────────
