@@ -1,8 +1,10 @@
 # wechat-analyzer
 
-微信聊天记录 AI 分析工具
+微信聊天记录 AI 分析工具 • LLM-powered personality profiling from WeChat chat history.
 
-基于 wechat-export 导出的 JSON 文件，做统计分析和 AI 人格画像。
+> Agentic development powered by Claude Code.
+
+Based on wechat-export exported JSON files, do statistics analysis and LLM-generated personality portraits. Local-first, privacy-focused.
 
 ## 功能特性
 
@@ -85,14 +87,14 @@ wechat-analyzer providers
 
 ## 支持的 AI 提供商
 
-| 提供商 | 参数 | 环境变量 | 推荐指数 |
-|--------|------|----------|----------|
-| DeepSeek | `--provider deepseek` | `DEEPSEEK_API_KEY` | ⭐️⭐️⭐️⭐️⭐️ |
-| Kimi | `--provider moonshot` | `MOONSHOT_API_KEY` | ⭐️⭐️⭐️⭐️ |
-| 通义千问 | `--provider qwen` | `DASHSCOPE_API_KEY` | ⭐️⭐️⭐️⭐️ |
-| 豆包 | `--provider doubao` | `DOUBAO_API_KEY` | ⭐️⭐️⭐️ |
-| 智谱 GLM | `--provider zhipu` | `ZHIPU_API_KEY` | ⭐️⭐️⭐️ |
-| Claude | `--provider anthropic` | `ANTHROPIC_API_KEY` | ⭐️⭐️⭐️⭐️ |
+| 提供商   | 参数                   | 环境变量            | 推荐指数   |
+| -------- | ---------------------- | ------------------- | ---------- |
+| DeepSeek | `--provider deepseek`  | `DEEPSEEK_API_KEY`  | ⭐️⭐️⭐️⭐️⭐️ |
+| Kimi     | `--provider moonshot`  | `MOONSHOT_API_KEY`  | ⭐️⭐️⭐️⭐️   |
+| 通义千问 | `--provider qwen`      | `DASHSCOPE_API_KEY` | ⭐️⭐️⭐️⭐️   |
+| 豆包     | `--provider doubao`    | `DOUBAO_API_KEY`    | ⭐️⭐️⭐️     |
+| 智谱 GLM | `--provider zhipu`     | `ZHIPU_API_KEY`     | ⭐️⭐️⭐️     |
+| Claude   | `--provider anthropic` | `ANTHROPIC_API_KEY` | ⭐️⭐️⭐️⭐️   |
 
 ## 输出说明
 
@@ -214,3 +216,5 @@ A: 目前仅支持分析单人对话记录，群聊记录分析在规划中。
 ## License
 
 MIT
+
+Made with Claude Code
