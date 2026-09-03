@@ -30,63 +30,77 @@ func (p AIProvider) String() string {
 
 // ProviderConfig 提供商配置
 type ProviderConfig struct {
-	EnvVar  string `json:"env_var"`  // 环境变量名
-	BaseURL string `json:"base_url"` // API 地址
-	Model   string `json:"model"`    // 模型名
+	EnvVar    string `json:"env_var"`              // 环境变量名
+	BaseURL   string `json:"base_url"`             // API 地址
+	Model     string `json:"model"`                // 模型名
 	ChatModel string `json:"chat_model,omitempty"` // 聊天模型名
 }
 
 // ProviderConfigs 全局配置，供外部访问
 var ProviderConfigs = map[AIProvider]ProviderConfig{
 	ProviderAnthropic: {
-		EnvVar:  "ANTHROPIC_API_KEY",
-		BaseURL: "https://api.anthropic.com/v1/",
-		Model:   "claude-opus-4-6",
+		EnvVar:    "ANTHROPIC_API_KEY",
+		BaseURL:   "https://api.anthropic.com/v1/",
+		Model:     "claude-opus-4-6",
 		ChatModel: "claude-opus-4-6",
 	},
 	ProviderDeepSeek: {
-		EnvVar:  "DEEPSEEK_API_KEY",
-		BaseURL: "https://api.deepseek.com/v1/",
-		Model:   "deepseek-chat",
+		EnvVar:    "DEEPSEEK_API_KEY",
+		BaseURL:   "https://api.deepseek.com/v1/",
+		Model:     "deepseek-chat",
 		ChatModel: "deepseek-chat",
 	},
 	ProviderMoonshot: {
-		EnvVar:  "MOONSHOT_API_KEY",
-		BaseURL: "https://api.moonshot.cn/v1/",
-		Model:   "moonshot-v1-8k",
+		EnvVar:    "MOONSHOT_API_KEY",
+		BaseURL:   "https://api.moonshot.cn/v1/",
+		Model:     "moonshot-v1-8k",
 		ChatModel: "moonshot-v1-8k",
 	},
 	ProviderQwen: {
-		EnvVar:  "DASHSCOPE_API_KEY",
-		BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1/",
-		Model:   "qwen-turbo",
+		EnvVar:    "DASHSCOPE_API_KEY",
+		BaseURL:   "https://dashscope.aliyuncs.com/compatible-mode/v1/",
+		Model:     "qwen-turbo",
 		ChatModel: "qwen-turbo",
 	},
 	ProviderDoubao: {
-		EnvVar:  "DOUBAO_API_KEY",
-		BaseURL: "https://ark.cn-beijing.volces.com/api/v3/",
-		Model:   "doubao-pro-4k",
+		EnvVar:    "DOUBAO_API_KEY",
+		BaseURL:   "https://ark.cn-beijing.volces.com/api/v3/",
+		Model:     "doubao-pro-4k",
 		ChatModel: "doubao-pro-4k",
 	},
 	ProviderZhipu: {
-		EnvVar:  "ZHIPU_API_KEY",
-		BaseURL: "https://open.bigmodel.cn/api/paas/v4/",
-		Model:   "glm-4-flash",
+		EnvVar:    "ZHIPU_API_KEY",
+		BaseURL:   "https://open.bigmodel.cn/api/paas/v4/",
+		Model:     "glm-4-flash",
 		ChatModel: "glm-4-flash",
 	},
 }
 
+var supportedProviders = []AIProvider{
+	ProviderDeepSeek,
+	ProviderMoonshot,
+	ProviderQwen,
+	ProviderDoubao,
+	ProviderZhipu,
+	ProviderAnthropic,
+}
+
+// SupportedProviders returns providers in deterministic auto-detection order.
+func SupportedProviders() []AIProvider {
+	return append([]AIProvider(nil), supportedProviders...)
+}
+
 // AnalysisResult AI 分析结果
 type AnalysisResult struct {
-	Title           string   `json:"title"`           // 人格称号
-	PersonalityTags []string `json:"tags"`            // 人格标签
-	Archetype       string   `json:"archetype"`        // 人格类型
+	Title           string   `json:"title"`     // 人格称号
+	PersonalityTags []string `json:"tags"`      // 人格标签
+	Archetype       string   `json:"archetype"` // 人格类型
 
-	Personality string `json:"personality"` // 人格画像
+	Personality  string `json:"personality"`  // 人格画像
 	Relationship string `json:"relationship"` // 关系分析
 
-	Topics  []string `json:"topics"`   // 常聊话题
-	Summary string   `json:"summary"`   // 总结
+	Topics  []string `json:"topics"`  // 常聊话题
+	Summary string   `json:"summary"` // 总结
 }
 
 // AnalyzeConversation AI 分析对话
@@ -126,13 +140,18 @@ func AnalyzeConversation(ctx context.Context, conv *loader.Conversation, stats *
 	if err != nil {
 		return nil, fmt.Errorf("API 调用失败: %w", err)
 	}
+	if len(resp.Choices) == 0 {
+		return nil, fmt.Errorf("API 返回结果中没有可用的回答")
+	}
 
 	content := resp.Choices[0].Message.Content
 	fmt.Println(content)
 
 	// 解析响应
 	result := parseResponse(content, conv)
-	result.Title = generateTitle(result.Archetype)
+	if result.Title == "" {
+		result.Title = generateTitle(result.Archetype)
+	}
 	return result, nil
 }
 
@@ -214,8 +233,13 @@ func parseResponse(raw string, conv *loader.Conversation) *AnalysisResult {
 			result.Relationship = strings.TrimPrefix(line, "关系分析：")
 		} else if strings.HasPrefix(line, "常聊话题：") {
 			line = strings.TrimPrefix(line, "常聊话题：")
-			topics := strings.Split(line, "、")
-			for _, t := range topics[:3] {
+			topics := strings.FieldsFunc(line, func(r rune) bool {
+				return r == '、' || r == ',' || r == '，'
+			})
+			if len(topics) > 3 {
+				topics = topics[:3]
+			}
+			for _, t := range topics {
 				t = strings.TrimSpace(t)
 				if t != "" {
 					result.Topics = append(result.Topics, t)
@@ -247,7 +271,8 @@ func generateTitle(archetype string) string {
 // DetectProviders 自动检测已配置的提供商
 func DetectProviders() []AIProvider {
 	var providers []AIProvider
-	for p, cfg := range ProviderConfigs {
+	for _, p := range supportedProviders {
+		cfg := ProviderConfigs[p]
 		if os.Getenv(cfg.EnvVar) != "" {
 			providers = append(providers, p)
 		}

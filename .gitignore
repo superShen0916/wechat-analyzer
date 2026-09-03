@@ -1,0 +1,5 @@
+/wechat-analyzer
+/dist/
+/wechat_analyze_ai/
+/wechat_analyze_stats/
+*.out

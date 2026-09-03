@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/fatih/color"
@@ -36,10 +37,17 @@ var (
 	colorStatName = color.New(color.FgHiBlue)
 	colorStatVal  = color.New(color.FgHiGreen)
 	colorLabel    = color.New(color.FgHiYellow)
-	colorError    = color.New(color.FgHiRed)
 	colorSuccess  = color.New(color.FgGreen)
 	colorInfo     = color.New(color.FgCyan)
 )
+
+func colorPrintf(printer *color.Color, format string, args ...any) {
+	_, _ = printer.Printf(format, args...)
+}
+
+func colorPrintln(printer *color.Color, args ...any) {
+	_, _ = printer.Println(args...)
+}
 
 // 打印分隔线
 func printDivider(char string, length int) {
@@ -49,15 +57,15 @@ func printDivider(char string, length int) {
 // 打印带标题的区块
 func printBlock(title string, maxWidth int) {
 	printDivider("═", maxWidth)
-	colorTitle.Printf(" %s ", title)
+	colorPrintf(colorTitle, " %s ", title)
 	fmt.Println()
 	printDivider("═", maxWidth)
 }
 
 // 打印统计项
 func printStat(name string, value string) {
-	colorStatName.Printf("%20s:", name)
-	colorStatVal.Printf(" %8s", value)
+	colorPrintf(colorStatName, "%20s:", name)
+	colorPrintf(colorStatVal, " %8s", value)
 	fmt.Println()
 }
 
@@ -81,8 +89,8 @@ var statsCmd = &cobra.Command{
 				continue
 			}
 
-			walkPath(path, func(conv *loader.Conversation) error {
-				colorInfo.Printf("\n🔍 分析: %s (%d 条消息)\n\n", conv.Talker.DisplayName(), len(conv.Messages))
+			if err := walkPath(path, func(conv *loader.Conversation) error {
+				colorPrintf(colorInfo, "\n🔍 分析: %s (%d 条消息)\n\n", conv.Talker.DisplayName(), len(conv.Messages))
 
 				// 统计分析
 				s, err := stats.AnalyzeConversation(conv)
@@ -111,7 +119,9 @@ var statsCmd = &cobra.Command{
 				}
 
 				return nil
-			})
+			}); err != nil {
+				return err
+			}
 		}
 
 		return nil
@@ -132,7 +142,7 @@ func printStats(s *stats.Stats, conv *loader.Conversation) {
 	printStat("我先开口", fmt.Sprintf("%d (%.1f%%)", s.FirstMessageCount, s.FirstMessageRatio))
 	fmt.Println()
 
-	colorLabel.Println("⏰ 活跃时段分布:")
+	colorPrintln(colorLabel, "⏰ 活跃时段分布:")
 	var peakHours []int
 	for hour := 0; hour < 24; hour++ {
 		if s.MsgPerHour[hour] > 0 {
@@ -140,13 +150,13 @@ func printStats(s *stats.Stats, conv *loader.Conversation) {
 		}
 	}
 
-	// 按消息数排序并取前5个
-	func() {
-		max := 5
-		if len(peakHours) > max {
-			peakHours = peakHours[:max]
-		}
-	}()
+	// 按消息数排序并取前 5 个
+	sort.Slice(peakHours, func(i, j int) bool {
+		return s.MsgPerHour[peakHours[i]] > s.MsgPerHour[peakHours[j]]
+	})
+	if len(peakHours) > 5 {
+		peakHours = peakHours[:5]
+	}
 
 	if len(peakHours) > 0 {
 		maxCount := s.MsgPerHour[peakHours[0]]
@@ -155,15 +165,21 @@ func printStats(s *stats.Stats, conv *loader.Conversation) {
 			// 计算长度，最长 20 个方块
 			barLen := count * 20 / maxCount
 			bar := strings.Repeat("█", barLen)
-			colorStatVal.Printf("  %02d点%02d → %d条 %s\n", h, h+1, count, bar)
+			colorPrintf(colorStatVal, "  %02d点%02d → %d条 %s\n", h, h+1, count, bar)
 		}
 		fmt.Println()
 	}
 
-	colorLabel.Println("💬 消息类型分布:")
-	for t, cnt := range s.MsgTypes {
+	colorPrintln(colorLabel, "💬 消息类型分布:")
+	types := make([]string, 0, len(s.MsgTypes))
+	for messageType := range s.MsgTypes {
+		types = append(types, messageType)
+	}
+	sort.Strings(types)
+	for _, messageType := range types {
+		cnt := s.MsgTypes[messageType]
 		p := float64(cnt) / float64(s.Total) * 100
-		colorStatVal.Printf("  %-10s: %d (%.1f%%)\n", t, cnt, p)
+		colorPrintf(colorStatVal, "  %-10s: %d (%.1f%%)\n", messageType, cnt, p)
 	}
 	fmt.Println()
 }
@@ -190,10 +206,7 @@ var analyzeCmd = &cobra.Command{
 
 		provider := ai.AIProvider(providerStr)
 		supported := false
-		for _, p := range []ai.AIProvider{
-			ai.ProviderAnthropic, ai.ProviderDeepSeek, ai.ProviderMoonshot,
-			ai.ProviderQwen, ai.ProviderDoubao, ai.ProviderZhipu,
-		} {
+		for _, p := range ai.SupportedProviders() {
 			if p.String() == providerStr {
 				supported = true
 				break
@@ -213,8 +226,8 @@ var analyzeCmd = &cobra.Command{
 				continue
 			}
 
-			walkPath(path, func(conv *loader.Conversation) error {
-				colorInfo.Printf("\n🤖 AI 分析 %s (%d 条消息)...\n\n", conv.Talker.DisplayName(), len(conv.Messages))
+			if err := walkPath(path, func(conv *loader.Conversation) error {
+				colorPrintf(colorInfo, "\n🤖 AI 分析 %s (%d 条消息)...\n\n", conv.Talker.DisplayName(), len(conv.Messages))
 
 				// 先做基础统计
 				s, err := stats.AnalyzeConversation(conv)
@@ -250,7 +263,9 @@ var analyzeCmd = &cobra.Command{
 				}
 
 				return nil
-			})
+			}); err != nil {
+				return err
+			}
 		}
 
 		return nil
@@ -261,36 +276,37 @@ func printAIResult(res *ai.AnalysisResult) {
 	width := 65
 	printBlock("🎭 AI 人格画像", width)
 
-	colorLabel.Println("人格称号:")
+	colorPrintln(colorLabel, "人格称号:")
 	fmt.Printf("  %s\n\n", res.Title)
 
-	colorLabel.Println("人格类型:")
+	colorPrintln(colorLabel, "人格类型:")
 	fmt.Printf("  %s\n\n", res.Archetype)
 
-	colorLabel.Println("人格标签:")
+	colorPrintln(colorLabel, "人格标签:")
 	for i, tag := range res.PersonalityTags {
 		if i > 0 {
 			fmt.Print("  ")
 		}
-		colorSuccess.Printf("#%s ", tag)
+		colorPrintf(colorSuccess, "#%s ", tag)
 	}
-	fmt.Println("\n")
+	fmt.Println()
+	fmt.Println()
 
-	colorLabel.Println("人格画像:")
+	colorPrintln(colorLabel, "人格画像:")
 	fmt.Printf("  %s\n\n", res.Personality)
 
-	colorLabel.Println("关系分析:")
+	colorPrintln(colorLabel, "关系分析:")
 	fmt.Printf("  %s\n\n", res.Relationship)
 
-	colorLabel.Println("常聊话题:")
+	colorPrintln(colorLabel, "常聊话题:")
 	for _, topic := range res.Topics {
-		colorStatVal.Printf("  • %s\n", topic)
+		colorPrintf(colorStatVal, "  • %s\n", topic)
 	}
 	fmt.Println()
 
-	colorLabel.Println("一句话总结:")
-	colorStatName.Printf("  %s\n", res.Summary)
-	colorLabel.Println(strings.Repeat("═", width))
+	colorPrintln(colorLabel, "一句话总结:")
+	colorPrintf(colorStatName, "  %s\n", res.Summary)
+	colorPrintln(colorLabel, strings.Repeat("═", width))
 }
 
 // ── providers 命令 ────────────────────────────────────────────────────────────
@@ -298,14 +314,10 @@ var providersCmd = &cobra.Command{
 	Use:   "providers",
 	Short: "列出所有支持的 AI 提供商",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Println("📋 支持的 AI 提供商:\n")
+		fmt.Println("📋 支持的 AI 提供商:")
+		fmt.Println()
 
-		providers := []ai.AIProvider{
-			ai.ProviderDeepSeek, ai.ProviderMoonshot, ai.ProviderQwen,
-			ai.ProviderDoubao, ai.ProviderZhipu, ai.ProviderAnthropic,
-		}
-
-		for _, p := range providers {
+		for _, p := range ai.SupportedProviders() {
 			cfg := ai.ProviderConfigs[p]
 			k := os.Getenv(cfg.EnvVar)
 			status := "❌"
@@ -315,7 +327,8 @@ var providersCmd = &cobra.Command{
 			fmt.Printf("  %s %-12s 环境变量: %s\n", status, p, cfg.EnvVar)
 		}
 
-		fmt.Println("\n📝 提示：设置对应环境变量后，工具会自动检测可用提供商。")
+		fmt.Println()
+		fmt.Println("📝 提示：设置对应环境变量后，工具会自动检测可用提供商。")
 		return nil
 	},
 }
@@ -372,10 +385,7 @@ func walkPath(path string, handler func(*loader.Conversation) error) error {
 
 func listSupportedProviders() string {
 	var names []string
-	for _, p := range []ai.AIProvider{
-		ai.ProviderDeepSeek, ai.ProviderMoonshot, ai.ProviderQwen,
-		ai.ProviderDoubao, ai.ProviderZhipu, ai.ProviderAnthropic,
-	} {
+	for _, p := range ai.SupportedProviders() {
 		names = append(names, p.String())
 	}
 	return strings.Join(names, ", ")
@@ -383,10 +393,7 @@ func listSupportedProviders() string {
 
 func listProviderEnvs() string {
 	var envs []string
-	for _, p := range []ai.AIProvider{
-		ai.ProviderDeepSeek, ai.ProviderMoonshot, ai.ProviderQwen,
-		ai.ProviderDoubao, ai.ProviderZhipu, ai.ProviderAnthropic,
-	} {
+	for _, p := range ai.SupportedProviders() {
 		envs = append(envs, ai.ProviderConfigs[p].EnvVar)
 	}
 	return strings.Join(envs, ", ")

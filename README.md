@@ -2,7 +2,7 @@
 
 A local-first Go CLI for turning exported WeChat conversations into useful statistics, visual reports, and optional LLM-assisted personality analysis.
 
-`wechat-analyzer` reads JSON exported by `wechat-export`, computes conversation statistics locally, and can generate self-contained HTML/ECharts reports. AI analysis is optional and is routed through a user-configured LLM provider.
+`wechat-analyzer` reads JSON exported by `wechat-export`, computes conversation statistics locally, and can generate self-contained HTML reports. AI analysis is optional and is routed through a user-configured LLM provider.
 
 ## What it does
 
@@ -15,8 +15,8 @@ A local-first Go CLI for turning exported WeChat conversations into useful stati
   - relationship / communication-pattern analysis
   - recurring topics and a short overall summary
 - **HTML reports**
-  - ECharts-based visualizations
-  - self-contained HTML output that can be viewed locally
+  - responsive, dependency-free visualizations
+  - a single HTML file that can be viewed locally without network requests
 - **Provider abstraction**
   - DeepSeek, Kimi / Moonshot, Qwen, Doubao, Zhipu GLM, and Anthropic
   - provider selection is configuration-driven through environment variables and `--provider`
@@ -30,6 +30,12 @@ The tool is local-first, but the privacy boundary depends on the command you run
 - API keys are read from environment variables. `wechat-analyzer` does not provide a hosted backend of its own.
 
 If you want a fully local workflow, use the statistics/reporting path without AI analysis.
+
+## Report preview
+
+![Example HTML report generated from anonymous sample data](docs/report-preview.jpg)
+
+The screenshot is generated from the repository's synthetic [`examples/sample-conversation.json`](examples/sample-conversation.json) fixture; it contains no real conversation data.
 
 ## Installation
 
@@ -64,6 +70,12 @@ wechat-analyzer stats ./output/张三.json --html
 
 # Analyze all exported conversations in a directory
 wechat-analyzer stats ./output/
+```
+
+Try it without supplying personal data:
+
+```bash
+go run ./cmd stats examples/sample-conversation.json --html
 ```
 
 ### AI personality analysis
@@ -136,7 +148,7 @@ The current parser expects the JSON format produced by `wechat-export`, for exam
 
 ## Reports
 
-Statistics and AI analysis can both produce HTML output. Reports use ECharts for visualization and are generated as local files, so they can be opened without running a separate web service.
+Statistics and AI analysis can both produce a single self-contained HTML file. The report embeds its visualizations and does not load scripts, fonts, or other assets from the network.
 
 Default output directories are:
 
@@ -158,7 +170,7 @@ go test ./...
 go vet ./...
 ```
 
-The repository currently has limited dedicated automated test coverage, so changes to parsing, provider integration, or report generation should be validated with representative exported data as well.
+CI runs tests and static checks on Linux, macOS, and Windows. The test suite covers JSON loading, statistics, provider detection, response parsing, and self-contained report generation.
 
 ## Compatibility
 

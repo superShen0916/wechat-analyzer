@@ -6,42 +6,43 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/superShen0916/wechat-analyzer/internal/loader"
 )
 
 // Stats 统计结果
 type Stats struct {
-	Total         int    `json:"total_messages"`    // 总消息数
-	AvgLength     float64 `json:"avg_msg_length"` // 平均消息长度
+	Total     int     `json:"total_messages"` // 总消息数
+	AvgLength float64 `json:"avg_msg_length"` // 平均消息长度
 
-	MsgPerDay     float64 `json:"msgs_per_day"`    // 日均消息数
-	MsgPerHour    []int   `json:"msgs_per_hour"`    // 每小时消息数
+	MsgPerDay  float64 `json:"msgs_per_day"`  // 日均消息数
+	MsgPerHour []int   `json:"msgs_per_hour"` // 每小时消息数
 
-	SentTotal     int     `json:"sent_total"`      // 自己发的
+	SentTotal     int     `json:"sent_total"`     // 自己发的
 	ReceivedTotal int     `json:"received_total"` // 收到的
-	SentRatio     float64 `json:"sent_ratio"`      // 我发的比例
+	SentRatio     float64 `json:"sent_ratio"`     // 我发的比例
 
-	FirstMessageCount int `json:"first_message_count"` // 我先开口的次数
+	FirstMessageCount int     `json:"first_message_count"` // 我先开口的活跃天数
 	FirstMessageRatio float64 `json:"first_message_ratio"`
 
-	ActiveDays   map[string]int `json:"active_days"`    // 每天消息数
-	TopMessages  []MessageInfo `json:"top_messages"` // 消息长度排名
+	ActiveDays  map[string]int `json:"active_days"`  // 每天消息数
+	TopMessages []MessageInfo  `json:"top_messages"` // 消息长度排名
 
-	MsgTypes     map[string]int `json:"msg_types"`    // 各类型消息数
+	MsgTypes map[string]int `json:"msg_types"` // 各类型消息数
 }
 
 // MessageInfo 单条消息信息（用于排名）
 type MessageInfo struct {
-	Content     string    `json:"content"`
-	Length      int       `json:"length"`
-	IsSender    bool      `json:"is_sender"`
-	CreateTime  int64     `json:"create_time"`
+	Content    string `json:"content"`
+	Length     int    `json:"length"`
+	IsSender   bool   `json:"is_sender"`
+	CreateTime int64  `json:"create_time"`
 }
 
 // AnalyzeConversation 分析一段对话的统计数据
 func AnalyzeConversation(conv *loader.Conversation) (*Stats, error) {
-	if conv.Total == 0 {
+	if conv == nil || len(conv.Messages) == 0 {
 		return nil, fmt.Errorf("没有消息可分析")
 	}
 
@@ -56,23 +57,12 @@ func AnalyzeConversation(conv *loader.Conversation) (*Stats, error) {
 	stats.AvgLength = float64(totalCharCount(conv.Messages)) / float64(len(conv.Messages))
 
 	// 发送方统计
-	firstCount := 0
-	for i, msg := range conv.Messages {
+	firstMessageByDay := make(map[string]loader.Message)
+	for _, msg := range conv.Messages {
 		if msg.IsSender {
 			stats.SentTotal++
 		} else {
 			stats.ReceivedTotal++
-		}
-
-		// 先开口统计
-		if msg.IsSender && i == 0 {
-			firstCount++
-		}
-		if !msg.IsSender && i > 0 && !conv.Messages[i-1].IsSender {
-			// 连续对方发的，不算
-		} else if msg.IsSender && i > 0 && !conv.Messages[i-1].IsSender {
-			// 对方上一条，我下一条，算我先开口
-			firstCount++
 		}
 
 		// 小时分布
@@ -83,6 +73,10 @@ func AnalyzeConversation(conv *loader.Conversation) (*Stats, error) {
 		// 活跃日期
 		dateStr := t.Format("2006-01-02")
 		stats.ActiveDays[dateStr]++
+		first, seen := firstMessageByDay[dateStr]
+		if !seen || msg.CreateTime < first.CreateTime {
+			firstMessageByDay[dateStr] = msg
+		}
 
 		// 消息类型
 		if msg.TypeName != "" {
@@ -91,14 +85,18 @@ func AnalyzeConversation(conv *loader.Conversation) (*Stats, error) {
 	}
 
 	// 计算比率
-	stats.SentRatio = float64(stats.SentTotal) / float64(conv.Total) * 100
-	stats.FirstMessageCount = firstCount
-	stats.FirstMessageRatio = float64(firstCount) / float64(conv.Total) * 100
+	stats.SentRatio = float64(stats.SentTotal) / float64(stats.Total) * 100
+	for _, first := range firstMessageByDay {
+		if first.IsSender {
+			stats.FirstMessageCount++
+		}
+	}
 
 	// 日均消息数
 	activeDayCount := len(stats.ActiveDays)
 	if activeDayCount > 0 {
-		stats.MsgPerDay = float64(conv.Total) / float64(activeDayCount)
+		stats.MsgPerDay = float64(stats.Total) / float64(activeDayCount)
+		stats.FirstMessageRatio = float64(stats.FirstMessageCount) / float64(activeDayCount) * 100
 	}
 
 	// 长消息排名
@@ -130,7 +128,10 @@ func (s *Stats) Print(conv *loader.Conversation) {
 	sort.Slice(peakHours, func(i, j int) bool {
 		return s.MsgPerHour[peakHours[i]] > s.MsgPerHour[peakHours[j]]
 	})
-	for _, h := range peakHours[:5] {
+	if len(peakHours) > 5 {
+		peakHours = peakHours[:5]
+	}
+	for _, h := range peakHours {
 		count := s.MsgPerHour[h]
 		bar := strings.Repeat("■", count*50/s.MsgPerHour[peakHours[0]])
 		fmt.Printf("  %d点:%02d → %d条 %s\n", h, h+1, count, bar)
@@ -143,7 +144,10 @@ func (s *Stats) Print(conv *loader.Conversation) {
 	sort.Slice(types, func(i, j int) bool {
 		return s.MsgTypes[types[i]] > s.MsgTypes[types[j]]
 	})
-	for _, t := range types[:5] {
+	if len(types) > 5 {
+		types = types[:5]
+	}
+	for _, t := range types {
 		count := s.MsgTypes[t]
 		p := float64(count) / float64(s.Total) * 100
 		fmt.Printf("  %-10s: %8d (%.1f%%)\n", t, count, p)
@@ -155,7 +159,7 @@ func (s *Stats) Print(conv *loader.Conversation) {
 func totalCharCount(msgs []loader.Message) int {
 	cnt := 0
 	for _, m := range msgs {
-		cnt += len(m.Content)
+		cnt += utf8.RuneCountInString(m.Content)
 	}
 	return cnt
 }
@@ -165,10 +169,10 @@ func getTopMessages(msgs []loader.Message, topN int) []MessageInfo {
 	for _, msg := range msgs {
 		if msg.TypeName == "text" || msg.TypeName == "" {
 			infos = append(infos, MessageInfo{
-				Content:     msg.Content,
-				Length:      len(msg.Content),
-				IsSender:    msg.IsSender,
-				CreateTime:  msg.CreateTime,
+				Content:    msg.Content,
+				Length:     utf8.RuneCountInString(msg.Content),
+				IsSender:   msg.IsSender,
+				CreateTime: msg.CreateTime,
 			})
 		}
 	}

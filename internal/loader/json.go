@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -76,6 +77,9 @@ func LoadDir(dir string) ([]*Conversation, error) {
 	if err != nil {
 		return nil, fmt.Errorf("读取目录失败: %w", err)
 	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name() < entries[j].Name()
+	})
 
 	var convs []*Conversation
 	for _, e := range entries {

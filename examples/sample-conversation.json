@@ -1,0 +1,84 @@
+{
+  "talker": {
+    "user_name": "wxid_sample",
+    "nick_name": "Sample Contact",
+    "remark": "Anonymous Demo",
+    "is_group": false
+  },
+  "total": 8,
+  "exported_at": "2026-01-03T12:00:00+08:00",
+  "messages": [
+    {
+      "local_id": 1,
+      "type": 1,
+      "type_name": "text",
+      "is_sender": true,
+      "create_time": 1767229200,
+      "content": "Morning! Are we still on for the project review?",
+      "display_content": "Morning! Are we still on for the project review?"
+    },
+    {
+      "local_id": 2,
+      "type": 1,
+      "type_name": "text",
+      "is_sender": false,
+      "create_time": 1767229800,
+      "content": "Yes, I will bring the latest notes.",
+      "display_content": "Yes, I will bring the latest notes."
+    },
+    {
+      "local_id": 3,
+      "type": 1,
+      "type_name": "text",
+      "is_sender": false,
+      "create_time": 1767256200,
+      "content": "The retry metrics look much better after yesterday's change.",
+      "display_content": "The retry metrics look much better after yesterday's change."
+    },
+    {
+      "local_id": 4,
+      "type": 1,
+      "type_name": "text",
+      "is_sender": true,
+      "create_time": 1767257100,
+      "content": "Great, let's document the failure mode before we merge.",
+      "display_content": "Great, let's document the failure mode before we merge."
+    },
+    {
+      "local_id": 5,
+      "type": 3,
+      "type_name": "image",
+      "is_sender": false,
+      "create_time": 1767260700,
+      "content": "",
+      "display_content": "[image]"
+    },
+    {
+      "local_id": 6,
+      "type": 1,
+      "type_name": "text",
+      "is_sender": true,
+      "create_time": 1767316500,
+      "content": "I added the regression test and CI is green.",
+      "display_content": "I added the regression test and CI is green."
+    },
+    {
+      "local_id": 7,
+      "type": 1,
+      "type_name": "text",
+      "is_sender": false,
+      "create_time": 1767321000,
+      "content": "Nice. I will review it this afternoon.",
+      "display_content": "Nice. I will review it this afternoon."
+    },
+    {
+      "local_id": 8,
+      "type": 1,
+      "type_name": "text",
+      "is_sender": false,
+      "create_time": 1767355200,
+      "content": "Everything looks good from my side.",
+      "display_content": "Everything looks good from my side."
+    }
+  ]
+}
