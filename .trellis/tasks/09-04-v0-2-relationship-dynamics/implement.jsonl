@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "项目规范总入口与中文文档约定"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "统计、CLI 与报告的包边界"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "参数校验和批处理错误约定"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "文本与 JSON stdout/stderr 约定"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "算法测试与兼容要求"}
+{"file": ".trellis/spec/backend/data-privacy.md", "reason": "报告正文与派生数据隐私边界"}
+{"file": ".trellis/tasks/09-04-v0-2-relationship-dynamics/research/current-state.md", "reason": "现有数据流、风险和设计选择"}

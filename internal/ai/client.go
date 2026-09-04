@@ -103,8 +103,17 @@ type AnalysisResult struct {
 	Summary string   `json:"summary"` // 总结
 }
 
+type AnalysisOptions struct {
+	EchoRaw bool
+}
+
 // AnalyzeConversation AI 分析对话
 func AnalyzeConversation(ctx context.Context, conv *loader.Conversation, stats *stats.Stats, provider AIProvider) (*AnalysisResult, error) {
+	return AnalyzeConversationWithOptions(ctx, conv, stats, provider, AnalysisOptions{EchoRaw: true})
+}
+
+// AnalyzeConversationWithOptions 允许机器可读输出关闭原始回答回显。
+func AnalyzeConversationWithOptions(ctx context.Context, conv *loader.Conversation, stats *stats.Stats, provider AIProvider, opts AnalysisOptions) (*AnalysisResult, error) {
 	// 检查配置
 	cfg, ok := ProviderConfigs[provider]
 	if !ok {
@@ -143,9 +152,10 @@ func AnalyzeConversation(ctx context.Context, conv *loader.Conversation, stats *
 	if len(resp.Choices) == 0 {
 		return nil, fmt.Errorf("API 返回结果中没有可用的回答")
 	}
-
 	content := resp.Choices[0].Message.Content
-	fmt.Println(content)
+	if opts.EchoRaw {
+		fmt.Println(content)
+	}
 
 	// 解析响应
 	result := parseResponse(content, conv)
@@ -183,8 +193,8 @@ func buildPrompt(conv *loader.Conversation, stats *stats.Stats) (string, string)
 
 	userPrompt := fmt.Sprintf(`
 聊天对象：%s
-聊天周期：从 %s 到 %s 共计 %.1f 天
-总消息数：%d条 日均 %.2f条
+聊天周期：从 %s 到 %s，覆盖 %d 个自然日，其中 %d 个活跃日
+总消息数：%d条，活跃日日均 %.2f条
 消息比例：我发了 %.1f%% (%d条) 对方发了 %.1f%% (%d条)
 我先开口：%.1f%% 的对话是我先发起的
 活跃时段：%s
@@ -195,7 +205,7 @@ func buildPrompt(conv *loader.Conversation, stats *stats.Stats) (string, string)
 2. 我们之间的沟通模式和关系
 3. 最常聊的话题和关注点
 `, talkName, startDate, endDate,
-		float64(len(stats.ActiveDays)), stats.Total, stats.MsgPerDay,
+		stats.CalendarDays, stats.ActiveDayCount, stats.Total, stats.MsgPerDay,
 		stats.SentRatio, stats.SentTotal,
 		100-stats.SentRatio, stats.ReceivedTotal,
 		stats.FirstMessageRatio,

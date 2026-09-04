@@ -10,6 +10,7 @@
 | [CLI 输出与日志](./logging-guidelines.md) | 修改终端或机器可读输出 |
 | [质量规范](./quality-guidelines.md) | 实现或审查任何行为变更 |
 | [会话数据与隐私](./data-privacy.md) | 读取、派生、展示或传输聊天数据 |
+| [关系动态与时期对比](./relationship-analysis.md) | 修改 Session、Turn、响应时间、日期或 compare 输出 |
 
 项目专属文档、Trellis 任务产物和开发日志默认使用中文；代码标识符、命令及无法
 自然翻译的技术名词保留英文。
