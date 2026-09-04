@@ -7,9 +7,11 @@ A local-first Go CLI for turning exported WeChat conversations into useful stati
 ## What it does
 
 - **Conversation statistics**
-  - total messages, average message length, messages per day
-  - sent/received ratio and conversation initiator ratio
-  - active-time distribution and message-type distribution
+  - active-day and calendar-day averages with explicit denominators
+  - session reconstruction, initiator/ending ratios, and longest session
+  - per-person response-time median/P90 based on speaker turns
+  - active streaks, monthly trends, and period-over-period comparison
+  - stable JSON output for scripts and downstream visualizations
 - **Optional AI analysis**
   - personality summary and tags
   - relationship / communication-pattern analysis
@@ -26,6 +28,7 @@ A local-first Go CLI for turning exported WeChat conversations into useful stati
 The tool is local-first, but the privacy boundary depends on the command you run:
 
 - `stats` and local HTML report generation can run entirely on your machine; the exported conversation file does not need to be sent to a third party.
+- HTML and JSON output exclude message text by default. `--include-content` explicitly adds the longest-message text; do not use it for a report you intend to share unless you have reviewed the output.
 - `analyze` calls the LLM provider you configure. The analysis context required for that request is sent to that provider and is therefore subject to the provider's privacy and data-retention policy.
 - API keys are read from environment variables. `wechat-analyzer` does not provide a hosted backend of its own.
 
@@ -70,6 +73,15 @@ wechat-analyzer stats ./output/张三.json --html
 
 # Analyze all exported conversations in a directory
 wechat-analyzer stats ./output/
+
+# Use a 45-minute session boundary
+wechat-analyzer stats ./output/张三.json --session-gap 45m
+
+# Produce machine-readable output (message text is omitted by default)
+wechat-analyzer stats ./output/张三.json --format json
+
+# Explicitly include longest-message text in JSON or HTML
+wechat-analyzer stats ./output/张三.json --html --include-content
 ```
 
 Try it without supplying personal data:
@@ -77,6 +89,27 @@ Try it without supplying personal data:
 ```bash
 go run ./cmd stats examples/sample-conversation.json --html
 ```
+
+### Compare two periods
+
+`compare` accepts exactly two `--period` values. A period can be a year (`YYYY`), a
+month (`YYYY-MM`), or an inclusive date range (`YYYY-MM-DD..YYYY-MM-DD`).
+
+```bash
+# Compare two years
+wechat-analyzer compare ./output/张三.json --period 2025 --period 2026
+
+# Compare a month with a custom date range and emit JSON
+wechat-analyzer compare ./output/张三.json \
+  --period 2026-01 \
+  --period 2026-02-01..2026-02-28 \
+  --format json
+```
+
+Both periods must contain messages. Available metrics include an absolute change;
+percentage changes are `null` when the first-period baseline is zero. A response
+median and its delta are `null` when either period has no response sample for
+that person, so missing data is not presented as a zero-second response.
 
 ### AI personality analysis
 
@@ -100,7 +133,22 @@ wechat-analyzer analyze ./output/张三.json --html
 
 # Write reports to a specific directory
 wechat-analyzer analyze ./output/张三.json --html --output ./reports
+
+# The AI result plus local statistics can also be emitted as JSON
+wechat-analyzer analyze ./output/张三.json --provider deepseek --format json
 ```
+
+## Relationship metric definitions
+
+- Messages are copied and stably sorted by `create_time` before analysis; the input data is never reordered in place.
+- A new session begins when the gap from the preceding message is **greater than** 30 minutes. Exactly 30 minutes stays in the same session. Change this with `--session-gap`.
+- Consecutive messages from the same person form one turn. A response sample is recorded only when the speaker changes, from the previous turn's last message to the new turn's first message.
+- Response P50 is the median (the mean of the two middle values for an even sample count). P90 uses the nearest-rank definition.
+- `msgs_per_day` is retained for compatibility and means messages per active day. `msgs_per_active_day` names the same metric explicitly; `msgs_per_calendar_day` uses the inclusive date span.
+- Monthly sessions belong to the month containing the session's first message. The longest active streak counts consecutive local calendar dates with at least one message.
+- All dates, hours, periods, and month boundaries use the machine's local timezone. The timezone is included in statistics JSON output.
+
+Response speed describes chat rhythm only. It should not be interpreted as a score of relationship quality or personal commitment.
 
 List available providers:
 
@@ -149,6 +197,8 @@ The current parser expects the JSON format produced by `wechat-export`, for exam
 ## Reports
 
 Statistics and AI analysis can both produce a single self-contained HTML file. The report embeds its visualizations and does not load scripts, fonts, or other assets from the network.
+
+The report includes session, response, initiator, active-streak, and monthly-trend views. Message text is hidden by default. Pass `--include-content` only when you explicitly want the longest messages embedded in the file; those messages remain readable by anyone who receives the report.
 
 Default output directories are:
 

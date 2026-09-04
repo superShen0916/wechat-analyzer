@@ -3,6 +3,7 @@ package stats
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -11,108 +12,328 @@ import (
 	"github.com/superShen0916/wechat-analyzer/internal/loader"
 )
 
-// Stats 统计结果
-type Stats struct {
-	Total     int     `json:"total_messages"` // 总消息数
-	AvgLength float64 `json:"avg_msg_length"` // 平均消息长度
+const DefaultSessionGap = 30 * time.Minute
 
-	MsgPerDay  float64 `json:"msgs_per_day"`  // 日均消息数
-	MsgPerHour []int   `json:"msgs_per_hour"` // 每小时消息数
-
-	SentTotal     int     `json:"sent_total"`     // 自己发的
-	ReceivedTotal int     `json:"received_total"` // 收到的
-	SentRatio     float64 `json:"sent_ratio"`     // 我发的比例
-
-	FirstMessageCount int     `json:"first_message_count"` // 我先开口的活跃天数
-	FirstMessageRatio float64 `json:"first_message_ratio"`
-
-	ActiveDays  map[string]int `json:"active_days"`  // 每天消息数
-	TopMessages []MessageInfo  `json:"top_messages"` // 消息长度排名
-
-	MsgTypes map[string]int `json:"msg_types"` // 各类型消息数
+type AnalyzeOptions struct {
+	SessionGap time.Duration
+	Location   *time.Location
 }
 
-// MessageInfo 单条消息信息（用于排名）
+// Stats 的新字段只追加，保留 v0.1 JSON 契约。
+type Stats struct {
+	Total     int     `json:"total_messages"`
+	AvgLength float64 `json:"avg_msg_length"`
+
+	MsgPerDay         float64 `json:"msgs_per_day"` // 兼容字段：活跃日日均
+	ActiveDayCount    int     `json:"active_day_count"`
+	CalendarDays      int     `json:"calendar_days"`
+	MsgPerActiveDay   float64 `json:"msgs_per_active_day"`
+	MsgPerCalendarDay float64 `json:"msgs_per_calendar_day"`
+	MsgPerHour        []int   `json:"msgs_per_hour"`
+	Timezone          string  `json:"timezone"`
+
+	SentTotal     int     `json:"sent_total"`
+	ReceivedTotal int     `json:"received_total"`
+	SentRatio     float64 `json:"sent_ratio"`
+
+	FirstMessageCount int     `json:"first_message_count"`
+	FirstMessageRatio float64 `json:"first_message_ratio"`
+
+	ActiveDays  map[string]int `json:"active_days"`
+	TopMessages []MessageInfo  `json:"top_messages,omitempty"`
+	MsgTypes    map[string]int `json:"msg_types"`
+
+	Relationship RelationshipStats `json:"relationship"`
+}
+
 type MessageInfo struct {
-	Content    string `json:"content"`
+	Content    string `json:"content,omitempty"`
 	Length     int    `json:"length"`
 	IsSender   bool   `json:"is_sender"`
 	CreateTime int64  `json:"create_time"`
 }
 
-// AnalyzeConversation 分析一段对话的统计数据
+type RelationshipStats struct {
+	SessionGapSeconds      int64          `json:"session_gap_seconds"`
+	TotalSessions          int            `json:"total_sessions"`
+	AvgMessagesPerSession  float64        `json:"avg_messages_per_session"`
+	LongestSessionMessages int            `json:"longest_session_messages"`
+	LongestSessionSeconds  int64          `json:"longest_session_seconds"`
+	StartedByMe            int            `json:"started_by_me"`
+	StartedByThem          int            `json:"started_by_them"`
+	StartedByMeRatio       float64        `json:"started_by_me_ratio"`
+	StartedByThemRatio     float64        `json:"started_by_them_ratio"`
+	EndedByMe              int            `json:"ended_by_me"`
+	EndedByThem            int            `json:"ended_by_them"`
+	EndedByMeRatio         float64        `json:"ended_by_me_ratio"`
+	EndedByThemRatio       float64        `json:"ended_by_them_ratio"`
+	MyResponses            ResponseStats  `json:"my_responses"`
+	TheirResponses         ResponseStats  `json:"their_responses"`
+	LongestActiveStreak    int            `json:"longest_active_streak"`
+	Monthly                []MonthlyStats `json:"monthly"`
+}
+
+type ResponseStats struct {
+	Count         int     `json:"count"`
+	MedianSeconds float64 `json:"median_seconds"`
+	P90Seconds    float64 `json:"p90_seconds"`
+}
+
+type MonthlyStats struct {
+	Month      string `json:"month"`
+	Total      int    `json:"total_messages"`
+	Sent       int    `json:"sent_messages"`
+	Received   int    `json:"received_messages"`
+	Sessions   int    `json:"sessions"`
+	ActiveDays int    `json:"active_days"`
+}
+
 func AnalyzeConversation(conv *loader.Conversation) (*Stats, error) {
+	return AnalyzeConversationWithOptions(conv, AnalyzeOptions{})
+}
+
+// AnalyzeConversationWithOptions 先复制并稳定排序，不修改 Loader 返回的切片。
+func AnalyzeConversationWithOptions(conv *loader.Conversation, opts AnalyzeOptions) (*Stats, error) {
 	if conv == nil || len(conv.Messages) == 0 {
 		return nil, fmt.Errorf("没有消息可分析")
 	}
-
-	stats := &Stats{
-		ActiveDays: make(map[string]int),
-		MsgTypes:   make(map[string]int),
-		MsgPerHour: make([]int, 24),
+	opts, err := normalizeOptions(opts)
+	if err != nil {
+		return nil, err
 	}
+	messages := append([]loader.Message(nil), conv.Messages...)
+	sort.SliceStable(messages, func(i, j int) bool { return messages[i].CreateTime < messages[j].CreateTime })
 
-	// 总览
-	stats.Total = len(conv.Messages)
-	stats.AvgLength = float64(totalCharCount(conv.Messages)) / float64(len(conv.Messages))
+	result := &Stats{
+		Total:        len(messages),
+		ActiveDays:   make(map[string]int),
+		MsgTypes:     make(map[string]int),
+		MsgPerHour:   make([]int, 24),
+		Timezone:     timezoneLabel(opts.Location, messages[0].CreateTime),
+		Relationship: RelationshipStats{SessionGapSeconds: int64(opts.SessionGap / time.Second)},
+	}
+	result.AvgLength = float64(totalCharCount(messages)) / float64(result.Total)
+	firstByDay := make(map[string]loader.Message)
+	monthly := make(map[string]*MonthlyStats)
+	monthlyDays := make(map[string]map[string]struct{})
 
-	// 发送方统计
-	firstMessageByDay := make(map[string]loader.Message)
-	for _, msg := range conv.Messages {
+	for _, msg := range messages {
 		if msg.IsSender {
-			stats.SentTotal++
+			result.SentTotal++
 		} else {
-			stats.ReceivedTotal++
+			result.ReceivedTotal++
 		}
-
-		// 小时分布
-		t := time.Unix(msg.CreateTime, 0)
-		hour := t.Hour()
-		stats.MsgPerHour[hour]++
-
-		// 活跃日期
-		dateStr := t.Format("2006-01-02")
-		stats.ActiveDays[dateStr]++
-		first, seen := firstMessageByDay[dateStr]
-		if !seen || msg.CreateTime < first.CreateTime {
-			firstMessageByDay[dateStr] = msg
+		t := time.Unix(msg.CreateTime, 0).In(opts.Location)
+		result.MsgPerHour[t.Hour()]++
+		date, month := t.Format("2006-01-02"), t.Format("2006-01")
+		result.ActiveDays[date]++
+		if _, exists := firstByDay[date]; !exists {
+			firstByDay[date] = msg
 		}
-
-		// 消息类型
+		entry := monthly[month]
+		if entry == nil {
+			entry = &MonthlyStats{Month: month}
+			monthly[month] = entry
+			monthlyDays[month] = make(map[string]struct{})
+		}
+		entry.Total++
+		if msg.IsSender {
+			entry.Sent++
+		} else {
+			entry.Received++
+		}
+		monthlyDays[month][date] = struct{}{}
 		if msg.TypeName != "" {
-			stats.MsgTypes[msg.TypeName]++
+			result.MsgTypes[msg.TypeName]++
 		}
 	}
 
-	// 计算比率
-	stats.SentRatio = float64(stats.SentTotal) / float64(stats.Total) * 100
-	for _, first := range firstMessageByDay {
+	result.SentRatio = percentage(result.SentTotal, result.Total)
+	for _, first := range firstByDay {
 		if first.IsSender {
-			stats.FirstMessageCount++
+			result.FirstMessageCount++
 		}
 	}
+	result.ActiveDayCount = len(result.ActiveDays)
+	result.MsgPerDay = ratio(result.Total, result.ActiveDayCount)
+	result.MsgPerActiveDay = result.MsgPerDay
+	result.FirstMessageRatio = percentage(result.FirstMessageCount, result.ActiveDayCount)
+	result.CalendarDays = calendarDaySpan(messages[0].CreateTime, messages[len(messages)-1].CreateTime, opts.Location)
+	result.MsgPerCalendarDay = ratio(result.Total, result.CalendarDays)
+	result.TopMessages = getTopMessages(messages, 10)
 
-	// 日均消息数
-	activeDayCount := len(stats.ActiveDays)
-	if activeDayCount > 0 {
-		stats.MsgPerDay = float64(stats.Total) / float64(activeDayCount)
-		stats.FirstMessageRatio = float64(stats.FirstMessageCount) / float64(activeDayCount) * 100
+	result.Relationship = analyzeRelationships(messages, opts)
+	result.Relationship.LongestActiveStreak = longestActiveStreak(result.ActiveDays, opts.Location)
+	for _, session := range buildSessions(messages, opts.SessionGap) {
+		month := time.Unix(session[0].CreateTime, 0).In(opts.Location).Format("2006-01")
+		monthly[month].Sessions++
 	}
-
-	// 长消息排名
-	stats.TopMessages = getTopMessages(conv.Messages, 10)
-
-	return stats, nil
+	months := make([]string, 0, len(monthly))
+	for month := range monthly {
+		months = append(months, month)
+	}
+	sort.Strings(months)
+	for _, month := range months {
+		entry := monthly[month]
+		entry.ActiveDays = len(monthlyDays[month])
+		result.Relationship.Monthly = append(result.Relationship.Monthly, *entry)
+	}
+	return result, nil
 }
 
-// Print 打印统计结果（终端可读）
+func normalizeOptions(opts AnalyzeOptions) (AnalyzeOptions, error) {
+	if opts.SessionGap == 0 {
+		opts.SessionGap = DefaultSessionGap
+	}
+	if opts.SessionGap < 0 {
+		return opts, fmt.Errorf("会话间隔必须大于 0")
+	}
+	if opts.Location == nil {
+		opts.Location = time.Local
+	}
+	return opts, nil
+}
+
+func analyzeRelationships(messages []loader.Message, opts AnalyzeOptions) RelationshipStats {
+	rel := RelationshipStats{SessionGapSeconds: int64(opts.SessionGap / time.Second)}
+	var mine, theirs []float64
+	for _, session := range buildSessions(messages, opts.SessionGap) {
+		rel.TotalSessions++
+		rel.AvgMessagesPerSession += float64(len(session))
+		if len(session) > rel.LongestSessionMessages {
+			rel.LongestSessionMessages = len(session)
+		}
+		duration := session[len(session)-1].CreateTime - session[0].CreateTime
+		if duration > rel.LongestSessionSeconds {
+			rel.LongestSessionSeconds = duration
+		}
+		if session[0].IsSender {
+			rel.StartedByMe++
+		} else {
+			rel.StartedByThem++
+		}
+		if session[len(session)-1].IsSender {
+			rel.EndedByMe++
+		} else {
+			rel.EndedByThem++
+		}
+
+		previousTurnLast := session[0]
+		for i := 1; i < len(session); i++ {
+			msg := session[i]
+			if msg.IsSender == previousTurnLast.IsSender {
+				previousTurnLast = msg
+				continue
+			}
+			seconds := float64(msg.CreateTime - previousTurnLast.CreateTime)
+			if msg.IsSender {
+				mine = append(mine, seconds)
+			} else {
+				theirs = append(theirs, seconds)
+			}
+			previousTurnLast = msg
+		}
+	}
+	if rel.TotalSessions > 0 {
+		rel.AvgMessagesPerSession /= float64(rel.TotalSessions)
+	}
+	rel.StartedByMeRatio = percentage(rel.StartedByMe, rel.TotalSessions)
+	rel.StartedByThemRatio = percentage(rel.StartedByThem, rel.TotalSessions)
+	rel.EndedByMeRatio = percentage(rel.EndedByMe, rel.TotalSessions)
+	rel.EndedByThemRatio = percentage(rel.EndedByThem, rel.TotalSessions)
+	rel.MyResponses, rel.TheirResponses = responseStats(mine), responseStats(theirs)
+	return rel
+}
+
+func buildSessions(messages []loader.Message, gap time.Duration) [][]loader.Message {
+	if len(messages) == 0 {
+		return nil
+	}
+	sessions, start := make([][]loader.Message, 0, 1), 0
+	for i := 1; i < len(messages); i++ {
+		if time.Duration(messages[i].CreateTime-messages[i-1].CreateTime)*time.Second > gap {
+			sessions = append(sessions, messages[start:i])
+			start = i
+		}
+	}
+	return append(sessions, messages[start:])
+}
+
+func responseStats(samples []float64) ResponseStats {
+	if len(samples) == 0 {
+		return ResponseStats{}
+	}
+	sorted := append([]float64(nil), samples...)
+	sort.Float64s(sorted)
+	middle, median := len(sorted)/2, float64(0)
+	median = sorted[middle]
+	if len(sorted)%2 == 0 {
+		median = (sorted[middle-1] + sorted[middle]) / 2
+	}
+	p90Index := int(math.Ceil(0.9*float64(len(sorted)))) - 1
+	return ResponseStats{Count: len(sorted), MedianSeconds: median, P90Seconds: sorted[p90Index]}
+}
+
+func calendarDaySpan(firstUnix, lastUnix int64, loc *time.Location) int {
+	first, last := time.Unix(firstUnix, 0).In(loc), time.Unix(lastUnix, 0).In(loc)
+	firstDay := time.Date(first.Year(), first.Month(), first.Day(), 0, 0, 0, 0, loc)
+	lastDay := time.Date(last.Year(), last.Month(), last.Day(), 0, 0, 0, 0, loc)
+	days := 1
+	for day := firstDay; day.Before(lastDay); day = day.AddDate(0, 0, 1) {
+		days++
+	}
+	return days
+}
+
+func longestActiveStreak(activeDays map[string]int, loc *time.Location) int {
+	if len(activeDays) == 0 {
+		return 0
+	}
+	dates := make([]time.Time, 0, len(activeDays))
+	for date := range activeDays {
+		parsed, err := time.ParseInLocation("2006-01-02", date, loc)
+		if err == nil {
+			dates = append(dates, parsed)
+		}
+	}
+	sort.Slice(dates, func(i, j int) bool { return dates[i].Before(dates[j]) })
+	longest, current := 1, 1
+	for i := 1; i < len(dates); i++ {
+		if dates[i-1].AddDate(0, 0, 1).Equal(dates[i]) {
+			current++
+		} else {
+			current = 1
+		}
+		if current > longest {
+			longest = current
+		}
+	}
+	return longest
+}
+
+func ratio(numerator, denominator int) float64 {
+	if denominator == 0 {
+		return 0
+	}
+	return float64(numerator) / float64(denominator)
+}
+
+func percentage(numerator, denominator int) float64 { return ratio(numerator, denominator) * 100 }
+
+func timezoneLabel(loc *time.Location, unix int64) string {
+	if loc.String() != "Local" {
+		return loc.String()
+	}
+	return time.Unix(unix, 0).In(loc).Format("MST (Z07:00)")
+}
+
+// Print 保留作为 v0.1 的终端可读 API。
 func (s *Stats) Print(conv *loader.Conversation) {
 	fmt.Printf("\n📊 聊天记录统计 (%s)\n", conv.Talker.DisplayName())
 	fmt.Println(strings.Repeat("─", 50))
 	fmt.Printf("%20s: %8d 条\n", "总消息数", s.Total)
 	fmt.Printf("%20s: %8.2f 字符\n", "平均每条长度", s.AvgLength)
 	fmt.Printf("%20s: %8.2f 条/天\n\n", "日均消息数", s.MsgPerDay)
-
 	fmt.Printf("%20s: %8d (%.1f%%)\n", "我发的消息", s.SentTotal, s.SentRatio)
 	fmt.Printf("%20s: %8d (%.1f%%)\n", "对方发的", s.ReceivedTotal, 100-s.SentRatio)
 	fmt.Printf("%20s: %8d (%.1f%%)\n\n", "我先开口", s.FirstMessageCount, s.FirstMessageRatio)
@@ -124,64 +345,56 @@ func (s *Stats) Print(conv *loader.Conversation) {
 			peakHours = append(peakHours, hour)
 		}
 	}
-	// 按消息数排序
-	sort.Slice(peakHours, func(i, j int) bool {
+	sort.SliceStable(peakHours, func(i, j int) bool {
+		if s.MsgPerHour[peakHours[i]] == s.MsgPerHour[peakHours[j]] {
+			return peakHours[i] < peakHours[j]
+		}
 		return s.MsgPerHour[peakHours[i]] > s.MsgPerHour[peakHours[j]]
 	})
 	if len(peakHours) > 5 {
 		peakHours = peakHours[:5]
 	}
-	for _, h := range peakHours {
-		count := s.MsgPerHour[h]
+	for _, hour := range peakHours {
+		count := s.MsgPerHour[hour]
 		bar := strings.Repeat("■", count*50/s.MsgPerHour[peakHours[0]])
-		fmt.Printf("  %d点:%02d → %d条 %s\n", h, h+1, count, bar)
+		fmt.Printf("  %d点:%02d → %d条 %s\n", hour, hour+1, count, bar)
 	}
 	fmt.Println("\n💬 消息类型分布:")
 	var types []string
-	for k := range s.MsgTypes {
-		types = append(types, k)
+	for messageType := range s.MsgTypes {
+		types = append(types, messageType)
 	}
 	sort.Slice(types, func(i, j int) bool {
+		if s.MsgTypes[types[i]] == s.MsgTypes[types[j]] {
+			return types[i] < types[j]
+		}
 		return s.MsgTypes[types[i]] > s.MsgTypes[types[j]]
 	})
 	if len(types) > 5 {
 		types = types[:5]
 	}
-	for _, t := range types {
-		count := s.MsgTypes[t]
-		p := float64(count) / float64(s.Total) * 100
-		fmt.Printf("  %-10s: %8d (%.1f%%)\n", t, count, p)
+	for _, messageType := range types {
+		count := s.MsgTypes[messageType]
+		fmt.Printf("  %-10s: %8d (%.1f%%)\n", messageType, count, percentage(count, s.Total))
 	}
 }
 
-// ── 辅助函数 ──────────────────────────────────────────────────────────────────
-
 func totalCharCount(msgs []loader.Message) int {
-	cnt := 0
-	for _, m := range msgs {
-		cnt += utf8.RuneCountInString(m.Content)
+	count := 0
+	for _, message := range msgs {
+		count += utf8.RuneCountInString(message.Content)
 	}
-	return cnt
+	return count
 }
 
 func getTopMessages(msgs []loader.Message, topN int) []MessageInfo {
 	var infos []MessageInfo
 	for _, msg := range msgs {
 		if msg.TypeName == "text" || msg.TypeName == "" {
-			infos = append(infos, MessageInfo{
-				Content:    msg.Content,
-				Length:     utf8.RuneCountInString(msg.Content),
-				IsSender:   msg.IsSender,
-				CreateTime: msg.CreateTime,
-			})
+			infos = append(infos, MessageInfo{Content: msg.Content, Length: utf8.RuneCountInString(msg.Content), IsSender: msg.IsSender, CreateTime: msg.CreateTime})
 		}
 	}
-
-	// 按长度排序
-	sort.Slice(infos, func(i, j int) bool {
-		return infos[i].Length > infos[j].Length
-	})
-
+	sort.SliceStable(infos, func(i, j int) bool { return infos[i].Length > infos[j].Length })
 	if len(infos) > topN {
 		return infos[:topN]
 	}
@@ -191,12 +404,11 @@ func getTopMessages(msgs []loader.Message, topN int) []MessageInfo {
 func (s *Stats) GetMostActiveTime() []string {
 	var hours []string
 	max := 0
-	for i, cnt := range s.MsgPerHour {
-		if cnt > max {
-			max = cnt
-			hours = []string{fmt.Sprintf("%d点", i)}
-		} else if cnt == max && cnt > 0 {
-			hours = append(hours, fmt.Sprintf("%d点", i))
+	for hour, count := range s.MsgPerHour {
+		if count > max {
+			max, hours = count, []string{fmt.Sprintf("%d点", hour)}
+		} else if count == max && count > 0 {
+			hours = append(hours, fmt.Sprintf("%d点", hour))
 		}
 	}
 	return hours
@@ -207,8 +419,8 @@ func (s *Stats) GetActiveDateRange() (string, string) {
 		return "", ""
 	}
 	dates := make([]string, 0, len(s.ActiveDays))
-	for d := range s.ActiveDays {
-		dates = append(dates, d)
+	for date := range s.ActiveDays {
+		dates = append(dates, date)
 	}
 	sort.Strings(dates)
 	return dates[0], dates[len(dates)-1]

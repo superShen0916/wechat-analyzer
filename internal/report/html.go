@@ -19,15 +19,21 @@ import (
 
 // HTMLReportData HTML 报告渲染数据
 type HTMLReportData struct {
-	Talker        string             `json:"talker"`
-	Stats         *stats.Stats       `json:"stats"`
-	AIResult      *ai.AnalysisResult `json:"ai_result"`
-	StartDate     string             `json:"start_date"`
-	EndDate       string             `json:"end_date"`
-	HourBars      []HourBar          `json:"hour_bars"`
-	ReceivedRatio float64            `json:"received_ratio"`
-	ExportedAt    string             `json:"exported_at"`
-	Today         string             `json:"today"`
+	Talker         string             `json:"talker"`
+	Stats          *stats.Stats       `json:"stats"`
+	AIResult       *ai.AnalysisResult `json:"ai_result"`
+	StartDate      string             `json:"start_date"`
+	EndDate        string             `json:"end_date"`
+	HourBars       []HourBar          `json:"hour_bars"`
+	MonthlyBars    []MonthlyBar       `json:"monthly_bars"`
+	IncludeContent bool               `json:"include_content"`
+	ReceivedRatio  float64            `json:"received_ratio"`
+	ExportedAt     string             `json:"exported_at"`
+	Today          string             `json:"today"`
+}
+
+type ReportOptions struct {
+	IncludeContent bool
 }
 
 // HourBar contains presentation-ready values for one hour in the activity chart.
@@ -38,13 +44,38 @@ type HourBar struct {
 	Y      int    `json:"y"`
 }
 
+type MonthlyBar struct {
+	Month string `json:"month"`
+	Total int    `json:"total"`
+	Width int    `json:"width"`
+}
+
 //go:embed template.html
 var reportTemplate string
 
 // GenerateHTMLReport 生成单人对话的 HTML 报告
 func GenerateHTMLReport(outputDir string, conv *loader.Conversation, stats *stats.Stats, aiResult *ai.AnalysisResult) (string, error) {
+	return GenerateHTMLReportWithOptions(outputDir, conv, stats, aiResult, ReportOptions{})
+}
+
+// GenerateHTMLReportWithOptions 只在 IncludeContent 明确开启时展示消息原文。
+func GenerateHTMLReportWithOptions(outputDir string, conv *loader.Conversation, stats *stats.Stats, aiResult *ai.AnalysisResult, opts ReportOptions) (string, error) {
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return "", err
+		return "", fmt.Errorf("创建报告目录失败: %w", err)
+	}
+	maxMonthlyCount := 0
+	for _, month := range stats.Relationship.Monthly {
+		if month.Total > maxMonthlyCount {
+			maxMonthlyCount = month.Total
+		}
+	}
+	monthlyBars := make([]MonthlyBar, 0, len(stats.Relationship.Monthly))
+	for _, month := range stats.Relationship.Monthly {
+		width := 0
+		if maxMonthlyCount > 0 {
+			width = month.Total * 100 / maxMonthlyCount
+		}
+		monthlyBars = append(monthlyBars, MonthlyBar{Month: month.Month, Total: month.Total, Width: width})
 	}
 
 	filename := sanitizeFilename(conv.Talker.DisplayName()) + "_report.html"
@@ -76,21 +107,24 @@ func GenerateHTMLReport(outputDir string, conv *loader.Conversation, stats *stat
 	// 准备数据
 	startDate, endDate := getDateRange(stats)
 	data := HTMLReportData{
-		Talker:        conv.Talker.DisplayName(),
-		Stats:         stats,
-		AIResult:      aiResult,
-		StartDate:     startDate,
-		EndDate:       endDate,
-		HourBars:      hourBars,
-		ReceivedRatio: 100 - stats.SentRatio,
-		ExportedAt:    time.Now().Format(time.RFC3339),
-		Today:         time.Now().Format("2006-01-02"),
+		Talker:         conv.Talker.DisplayName(),
+		Stats:          stats,
+		AIResult:       aiResult,
+		StartDate:      startDate,
+		EndDate:        endDate,
+		HourBars:       hourBars,
+		MonthlyBars:    monthlyBars,
+		IncludeContent: opts.IncludeContent,
+		ReceivedRatio:  100 - stats.SentRatio,
+		ExportedAt:     time.Now().Format(time.RFC3339),
+		Today:          time.Now().Format("2006-01-02"),
 	}
 
 	funcMap := template.FuncMap{
 		"toFixed": func(f float64, n int) string {
 			return fmt.Sprintf(fmt.Sprintf("%%.%df", n), f)
 		},
+		"duration": formatDuration,
 	}
 
 	// 解析模板
@@ -108,6 +142,25 @@ func GenerateHTMLReport(outputDir string, conv *loader.Conversation, stats *stat
 	}
 
 	return outputPath, nil
+}
+
+func formatDuration(value any) string {
+	var seconds float64
+	switch typed := value.(type) {
+	case int64:
+		seconds = float64(typed)
+	case float64:
+		seconds = typed
+	default:
+		return "0 秒"
+	}
+	if seconds < 60 {
+		return fmt.Sprintf("%.0f 秒", seconds)
+	}
+	if seconds < 3600 {
+		return fmt.Sprintf("%.1f 分钟", seconds/60)
+	}
+	return fmt.Sprintf("%.1f 小时", seconds/3600)
 }
 
 // ── 辅助函数 ──────────────────────────────────────────────────────────────────

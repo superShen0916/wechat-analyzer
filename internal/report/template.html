@@ -52,6 +52,13 @@
   .hour-bar svg { width: 100%; height: 100%; overflow: visible; }
   .hour-bar rect { fill: #667eea; rx: 2px; }
   .hour-bar title { color: #333; }
+  .note { color: #777; font-size: 13px; margin-top: 10px; }
+  .monthly-chart { display: grid; gap: 10px; margin-top: 16px; }
+  .monthly-row { display: grid; grid-template-columns: 72px 1fr 64px;
+                 gap: 12px; align-items: center; font-size: 13px; }
+  .monthly-track { height: 14px; background: #eee; border-radius: 999px; overflow: hidden; }
+  .monthly-fill { height: 100%; background: linear-gradient(90deg, #667eea, #f093fb);
+                  border-radius: 999px; min-width: 2px; }
   @media (max-width: 720px) {
     .container { padding: 10px; }
     .header { padding: 28px 18px; }
@@ -99,7 +106,11 @@
       </div>
       <div class="stat-item">
         <div class="stat-number">{{toFixed .Stats.MsgPerDay 1}}</div>
-        <div class="stat-label">日均消息</div>
+        <div class="stat-label">活跃日日均</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-number">{{toFixed .Stats.MsgPerCalendarDay 1}}</div>
+        <div class="stat-label">自然日日均（{{.Stats.CalendarDays}} 天）</div>
       </div>
       <div class="stat-item">
         <div class="stat-number">{{toFixed .Stats.SentRatio 1}}%</div>
@@ -107,6 +118,69 @@
       </div>
     </div>
   </div>
+
+  <!-- 关系动态 -->
+  <div class="card">
+    <h2>🤝 关系动态</h2>
+    <div class="stats-grid">
+      <div class="stat-item">
+        <div class="stat-number">{{.Stats.Relationship.TotalSessions}}</div>
+        <div class="stat-label">会话数（间隔 {{duration .Stats.Relationship.SessionGapSeconds}}）</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-number">{{toFixed .Stats.Relationship.AvgMessagesPerSession 1}}</div>
+        <div class="stat-label">平均每次会话消息</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-number">{{.Stats.Relationship.LongestSessionMessages}}</div>
+        <div class="stat-label">最长会话消息数 · {{duration .Stats.Relationship.LongestSessionSeconds}}</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-number">{{.Stats.Relationship.LongestActiveStreak}}</div>
+        <div class="stat-label">最长连续活跃天数</div>
+      </div>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-item">
+        <div class="stat-number">{{toFixed .Stats.Relationship.StartedByMeRatio 1}}%</div>
+        <div class="stat-label">由我开始的会话</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-number">{{toFixed .Stats.Relationship.EndedByMeRatio 1}}%</div>
+        <div class="stat-label">由我结束的会话</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>⏱️ 响应节奏</h2>
+    <div class="stats-grid">
+      <div class="stat-item">
+        {{if .Stats.Relationship.MyResponses.Count}}
+        <div class="stat-number">{{duration .Stats.Relationship.MyResponses.MedianSeconds}}</div>
+        <div class="stat-label">我的响应中位数 · P90 {{duration .Stats.Relationship.MyResponses.P90Seconds}}</div>
+        {{else}}<div class="stat-number">暂无</div><div class="stat-label">我的响应样本</div>{{end}}
+      </div>
+      <div class="stat-item">
+        {{if .Stats.Relationship.TheirResponses.Count}}
+        <div class="stat-number">{{duration .Stats.Relationship.TheirResponses.MedianSeconds}}</div>
+        <div class="stat-label">对方响应中位数 · P90 {{duration .Stats.Relationship.TheirResponses.P90Seconds}}</div>
+        {{else}}<div class="stat-number">暂无</div><div class="stat-label">对方响应样本</div>{{end}}
+      </div>
+    </div>
+    <p class="note">响应时间只描述聊天节奏，不代表关系质量。连续同方消息会合并为一个 Turn。</p>
+  </div>
+
+  {{if .MonthlyBars}}
+  <div class="card">
+    <h2>📅 月度趋势</h2>
+    <div class="monthly-chart">
+      {{range .MonthlyBars}}
+      <div class="monthly-row"><span>{{.Month}}</span><div class="monthly-track"><div class="monthly-fill" style="width: {{.Width}}%"></div></div><span>{{.Total}} 条</span></div>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
 
   <!-- 发送比例 -->
   <div class="card">
@@ -166,7 +240,7 @@
   {{end}}
 
   <!-- 长消息列表 -->
-  {{if .Stats.TopMessages}}
+  {{if and .IncludeContent .Stats.TopMessages}}
   <div class="card">
     <h2>📜 最长大消息</h2>
     <div style="margin-top: 16px; font-size: 15px;">
