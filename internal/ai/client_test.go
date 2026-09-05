@@ -1,10 +1,14 @@
 package ai
 
 import (
+	"context"
 	"reflect"
+	"strings"
 	"testing"
 
+	openai "github.com/sashabaranov/go-openai"
 	"github.com/superShen0916/wechat-analyzer/internal/loader"
+	"github.com/superShen0916/wechat-analyzer/internal/stats"
 )
 
 func TestSupportedProvidersOrder(t *testing.T) {
@@ -61,5 +65,24 @@ func TestGenerateTitle(t *testing.T) {
 	}
 	if got := generateTitle("OTHER"); got != "灵魂伙伴" {
 		t.Fatalf("generateTitle() default = %q", got)
+	}
+}
+
+func TestAggregateAnalysisSendsStatisticsWithoutMessageContent(t *testing.T) {
+	conversation := &loader.Conversation{
+		Talker:   loader.Contact{Remark: "Contact"},
+		Messages: []loader.Message{{TypeName: "text", Content: "TOP-SECRET-MESSAGE"}},
+	}
+	statistics := &stats.Stats{Total: 1, ActiveDays: map[string]int{"2026-01-01": 1}}
+	client := &fakeCompletionClient{response: openai.ChatCompletionResponse{Choices: []openai.ChatCompletionChoice{{
+		Message: openai.ChatCompletionMessage{Content: "标题：结果\n人格类型：类型\n标签：#标签\n人格画像：画像\n关系分析：关系\n常聊话题：话题\n总结：总结"},
+	}}}}
+	if _, err := analyzeAggregateWithClient(context.Background(), client, "model", conversation, statistics, AnalysisOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range client.request.Messages {
+		if strings.Contains(message.Content, "TOP-SECRET-MESSAGE") {
+			t.Fatal("aggregate-only prompt included message content")
+		}
 	}
 }

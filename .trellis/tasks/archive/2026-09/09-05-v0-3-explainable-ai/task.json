@@ -1,0 +1,29 @@
+{
+  "id": "v0-3-explainable-ai",
+  "name": "v0-3-explainable-ai",
+  "title": "v0.3 可解释 AI 分析",
+  "description": "为 AI 分析增加发送前预览、隐私脱敏、结构化证据引用与可回归评测。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "internal/ai, cmd, internal/report, README, tests",
+  "package": null,
+  "priority": "P1",
+  "creator": "shenpeng.sp0916",
+  "assignee": "shenpeng.sp0916",
+  "createdAt": "2026-09-05",
+  "completedAt": "2026-09-05",
+  "branch": "feat/v0.3-explainable-ai",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "title": "v0.3 可解释 AI 分析",
+    "description": "为 AI 分析增加发送前预览、隐私脱敏、结构化证据引用与可回归评测。"
+  }
+}

@@ -19,7 +19,10 @@ import (
 	"github.com/superShen0916/wechat-analyzer/internal/stats"
 )
 
-const schemaVersion = "v0.2"
+const (
+	schemaVersion         = "v0.2"
+	evidenceSchemaVersion = "v0.3"
+)
 
 type statsOutput struct {
 	Contact    string       `json:"contact"`
@@ -42,6 +45,12 @@ type analysisOutput struct {
 type analysisEnvelope struct {
 	SchemaVersion string           `json:"schema_version"`
 	Results       []analysisOutput `json:"results"`
+}
+
+type evidencePreviewEnvelope struct {
+	SchemaVersion string             `json:"schema_version"`
+	Contact       string             `json:"contact"`
+	Evidence      *ai.EvidenceBundle `json:"evidence"`
 }
 
 type comparisonEnvelope struct {
@@ -277,6 +286,21 @@ var analyzeCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		evidence, _ := cmd.Flags().GetBool("evidence")
+		preview, _ := cmd.Flags().GetBool("preview")
+		evidenceOpts, err := evidenceOptions(cmd, opts.Location)
+		if err != nil {
+			return err
+		}
+		if preview {
+			if !evidence {
+				return fmt.Errorf("--preview 需要同时指定 --evidence")
+			}
+			if len(args) != 1 {
+				return fmt.Errorf("--preview 只支持一个 JSON 文件")
+			}
+			return previewEvidence(cmd, args[0], format, opts, evidenceOpts)
+		}
 
 		providerStr, _ := cmd.Flags().GetString("provider")
 		if providerStr == "" {
@@ -325,13 +349,27 @@ var analyzeCmd = &cobra.Command{
 					return nil
 				}
 
-				// AI 分析
-				aiRes, err := ai.AnalyzeConversationWithOptions(ctx, conv, s, provider, ai.AnalysisOptions{EchoRaw: format == "text"})
+				// AI 分析。默认模式只发送聚合统计；evidence 模式发送本地脱敏后的抽样摘录。
+				var aiRes *ai.AnalysisResult
+				if evidence {
+					bundle, evidenceErr := ai.PrepareEvidence(conv, s, evidenceOpts)
+					if evidenceErr != nil {
+						warnf(cmd.ErrOrStderr(), "  ⚠️  准备证据失败: %v\n", evidenceErr)
+						return nil
+					}
+					aiRes, err = ai.AnalyzeEvidence(ctx, s, provider, bundle, ai.AnalysisOptions{})
+				} else {
+					aiRes, err = ai.AnalyzeConversationWithOptions(ctx, conv, s, provider, ai.AnalysisOptions{EchoRaw: format == "text"})
+				}
 				if err != nil {
 					warnf(cmd.ErrOrStderr(), "  ⚠️  AI 分析失败: %v\n", err)
 					return nil
 				}
-				item := analysisOutput{Contact: conv.Talker.DisplayName(), Statistics: statsForOutput(s, includeContent), Analysis: aiRes}
+				item := analysisOutput{
+					Contact:    conv.Talker.DisplayName(),
+					Statistics: statsForOutput(s, includeContent && !evidence),
+					Analysis:   analysisForOutput(aiRes, includeContent && evidence),
+				}
 				if format == "text" {
 					printAIResult(aiRes)
 				}
@@ -344,7 +382,10 @@ var analyzeCmd = &cobra.Command{
 					} else {
 						htmlDir = outputDir
 					}
-					reportPath, err := report.GenerateHTMLReportWithOptions(htmlDir, conv, s, aiRes, report.ReportOptions{IncludeContent: includeContent})
+					reportPath, err := report.GenerateHTMLReportWithOptions(htmlDir, conv, s, aiRes, report.ReportOptions{
+						IncludeContent:         includeContent && !evidence,
+						IncludeEvidenceContent: includeContent && evidence,
+					})
 					if err != nil {
 						warnf(cmd.ErrOrStderr(), "  ⚠️  生成报告失败: %v\n", err)
 						return nil
@@ -361,7 +402,11 @@ var analyzeCmd = &cobra.Command{
 			}
 		}
 		if format == "json" {
-			return writeJSON(cmd.OutOrStdout(), analysisEnvelope{SchemaVersion: schemaVersion, Results: results})
+			version := schemaVersion
+			if evidence {
+				version = evidenceSchemaVersion
+			}
+			return writeJSON(cmd.OutOrStdout(), analysisEnvelope{SchemaVersion: version, Results: results})
 		}
 		return nil
 	},
@@ -401,6 +446,41 @@ func printAIResult(res *ai.AnalysisResult) {
 
 	colorPrintln(colorLabel, "一句话总结:")
 	colorPrintf(colorStatName, "  %s\n", res.Summary)
+	if len(res.Claims) > 0 {
+		fmt.Println()
+		if res.Evidence != nil {
+			colorPrintln(colorLabel, "证据契约:")
+			truncated := "否"
+			if res.Evidence.Sampling.Truncated {
+				truncated = "是"
+			}
+			fmt.Printf("  Prompt %s · Provider %s · 样本 %d/%d 条、%d/%d 字符\n", res.PromptVersion, res.Provider,
+				res.Evidence.Sampling.SelectedMessages, res.Evidence.Sampling.CandidateMessages,
+				res.Evidence.Sampling.SelectedChars, res.Evidence.Sampling.CandidateChars)
+			fmt.Printf("  时间 %s 至 %s · 截断 %s\n", res.Evidence.Sampling.StartTime, res.Evidence.Sampling.EndTime, truncated)
+			keys := make([]string, 0, len(res.Evidence.Redactions))
+			for key := range res.Evidence.Redactions {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				fmt.Printf("  %s=%d", key, res.Evidence.Redactions[key])
+			}
+			fmt.Println()
+			fmt.Println()
+		}
+		colorPrintln(colorLabel, "证据化结论:")
+		for _, claim := range res.Claims {
+			fmt.Printf("  • [%s / %s] %s（%s）\n", claim.Category, claim.Confidence, claim.Text, strings.Join(claim.EvidenceIDs, ", "))
+		}
+	}
+	if len(res.Limitations) > 0 {
+		fmt.Println()
+		colorPrintln(colorLabel, "分析局限:")
+		for _, limitation := range res.Limitations {
+			fmt.Printf("  • %s\n", limitation)
+		}
+	}
 	colorPrintln(colorLabel, strings.Repeat("═", width))
 }
 
@@ -542,6 +622,122 @@ func statsForOutput(source *stats.Stats, includeContent bool) *stats.Stats {
 	return &copyStats
 }
 
+func analysisForOutput(source *ai.AnalysisResult, includeEvidenceContent bool) *ai.AnalysisResult {
+	if source == nil {
+		return nil
+	}
+	result := *source
+	result.PersonalityTags = append([]string(nil), source.PersonalityTags...)
+	result.Topics = append([]string(nil), source.Topics...)
+	result.Limitations = append([]string(nil), source.Limitations...)
+	result.Claims = append([]ai.Claim(nil), source.Claims...)
+	for i := range result.Claims {
+		result.Claims[i].EvidenceIDs = append([]string(nil), source.Claims[i].EvidenceIDs...)
+	}
+	if source.Evidence != nil {
+		bundle := *source.Evidence
+		bundle.Messages = append([]ai.EvidenceMessage(nil), source.Evidence.Messages...)
+		bundle.Redactions = make(map[string]int, len(source.Evidence.Redactions))
+		for key, value := range source.Evidence.Redactions {
+			bundle.Redactions[key] = value
+		}
+		bundle.Statistics.ActiveTimes = append([]string(nil), source.Evidence.Statistics.ActiveTimes...)
+		if !includeEvidenceContent {
+			for i := range bundle.Messages {
+				bundle.Messages[i].Content = ""
+			}
+		}
+		result.Evidence = &bundle
+	}
+	return &result
+}
+
+func evidenceOptions(cmd *cobra.Command, location *time.Location) (ai.EvidenceOptions, error) {
+	maxMessages, err := cmd.Flags().GetInt("evidence-messages")
+	if err != nil {
+		return ai.EvidenceOptions{}, err
+	}
+	maxChars, err := cmd.Flags().GetInt("evidence-chars")
+	if err != nil {
+		return ai.EvidenceOptions{}, err
+	}
+	if maxMessages < ai.MinEvidenceMessages || maxMessages > ai.MaxEvidenceMessages {
+		return ai.EvidenceOptions{}, fmt.Errorf("--evidence-messages 必须在 %d 到 %d 之间", ai.MinEvidenceMessages, ai.MaxEvidenceMessages)
+	}
+	if maxChars < ai.MinEvidenceChars || maxChars > ai.MaxEvidenceChars {
+		return ai.EvidenceOptions{}, fmt.Errorf("--evidence-chars 必须在 %d 到 %d 之间", ai.MinEvidenceChars, ai.MaxEvidenceChars)
+	}
+	return ai.EvidenceOptions{MaxMessages: maxMessages, MaxChars: maxChars, Location: location}, nil
+}
+
+func previewEvidence(cmd *cobra.Command, path, format string, statsOpts stats.AnalyzeOptions, evidenceOpts ai.EvidenceOptions) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("无法读取 %s: %w", path, err)
+	}
+	if info.IsDir() || !strings.EqualFold(filepath.Ext(path), ".json") {
+		return fmt.Errorf("--preview 只支持一个 JSON 文件")
+	}
+	conversation, err := loader.LoadFile(path)
+	if err != nil {
+		return err
+	}
+	statistics, err := stats.AnalyzeConversationWithOptions(conversation, statsOpts)
+	if err != nil {
+		return err
+	}
+	bundle, err := ai.PrepareEvidence(conversation, statistics, evidenceOpts)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		return writeJSON(cmd.OutOrStdout(), evidencePreviewEnvelope{
+			SchemaVersion: evidenceSchemaVersion,
+			Contact:       conversation.Talker.DisplayName(),
+			Evidence:      bundle,
+		})
+	}
+	return printEvidencePreview(cmd.OutOrStdout(), conversation.Talker.DisplayName(), bundle)
+}
+
+func printEvidencePreview(writer io.Writer, contact string, bundle *ai.EvidenceBundle) error {
+	truncated := "否"
+	if bundle.Sampling.Truncated {
+		truncated = "是"
+	}
+	if _, err := fmt.Fprintf(writer, "Evidence Bundle 预览：%s\nPrompt 版本：%s\n样本：%d/%d 条，%d/%d 字符\n预算：最多 %d 条、%d 字符；是否截断：%s\n时间：%s 至 %s\n聚合统计：总消息 %d（我 %d / 对方 %d），发送比例 %.1f%%，活跃日 %d，自然日 %d，会话 %d\n活跃时段：%s\n\n",
+		contact, bundle.PromptVersion, bundle.Sampling.SelectedMessages, bundle.Sampling.CandidateMessages,
+		bundle.Sampling.SelectedChars, bundle.Sampling.CandidateChars, bundle.Sampling.MaxMessages, bundle.Sampling.MaxChars,
+		truncated, bundle.Sampling.StartTime, bundle.Sampling.EndTime, bundle.Statistics.TotalMessages,
+		bundle.Statistics.SentMessages, bundle.Statistics.ReceivedMessages, bundle.Statistics.SentRatio,
+		bundle.Statistics.ActiveDays, bundle.Statistics.CalendarDays, bundle.Statistics.Sessions,
+		strings.Join(bundle.Statistics.ActiveTimes, "、")); err != nil {
+		return err
+	}
+	keys := make([]string, 0, len(bundle.Redactions))
+	for key := range bundle.Redactions {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if _, err := fmt.Fprintln(writer, "脱敏计数："); err != nil {
+		return err
+	}
+	for _, key := range keys {
+		if _, err := fmt.Fprintf(writer, "  %s: %d\n", key, bundle.Redactions[key]); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintln(writer, "\n入选摘录："); err != nil {
+		return err
+	}
+	for _, message := range bundle.Messages {
+		if _, err := fmt.Fprintf(writer, "  %s [%s] %s %s\n", message.ID, message.Speaker, message.Time, message.Content); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func writeJSON(writer io.Writer, value any) error {
 	encoder := json.NewEncoder(writer)
 	encoder.SetIndent("", "  ")
@@ -630,6 +826,10 @@ func init() {
 	analyzeCmd.Flags().StringP("provider", "p", "", "AI 提供商（支持: deepseek, moonshot, qwen, doubao, zhipu）")
 	analyzeCmd.Flags().Bool("html", false, "生成 AI 分析 HTML 报告")
 	analyzeCmd.Flags().StringP("output", "o", "", "输出目录")
+	analyzeCmd.Flags().Bool("evidence", false, "发送本地脱敏抽样摘录，生成可引用证据的结构化分析")
+	analyzeCmd.Flags().Bool("preview", false, "仅预览 Evidence Bundle，不调用 AI（需配合 --evidence）")
+	analyzeCmd.Flags().Int("evidence-messages", ai.DefaultEvidenceMessages, "证据样本的最大消息数")
+	analyzeCmd.Flags().Int("evidence-chars", ai.DefaultEvidenceChars, "证据样本的最大字符数")
 	addAnalysisFlags(analyzeCmd, true)
 
 	compareCmd.Flags().StringSlice("period", nil, "对比时期，需要两个（YYYY、YYYY-MM 或日期范围）")
