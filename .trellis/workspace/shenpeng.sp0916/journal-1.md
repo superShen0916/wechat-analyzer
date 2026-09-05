@@ -49,3 +49,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: 完成 v0.3 可解释 AI 分析
+<!-- trellis-session: v=2 fp=7ead3392857367bf -->
+
+**Date**: 2026-09-05
+**Task**: 完成 v0.3 可解释 AI 分析
+**Branch**: `feat/v0.3-explainable-ai`
+
+### Summary
+
+新增显式 evidence 模式、无网络发送前预览、确定性抽样与本地脱敏、严格 JSON claim 引用校验、安全 JSON/HTML 投影和完整测试；独立 Check 通过并回写 Evidence 跨层规范。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `40ab928` | feat: add explainable evidence analysis |
+
+### Status
+
+[OK] **Completed**
