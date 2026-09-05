@@ -78,6 +78,13 @@
                 gap: 8px; margin-top: 12px; }
   .topic-item { padding: 10px 16px; background: linear-gradient(45deg, #fff 0%, #f5f5f5 100%);
                 border-radius: 8px; border-left: 4px solid #667eea; }
+  .claim { padding: 16px; border: 1px solid #e8e8f3; border-radius: 8px; margin-top: 12px; }
+  .claim-meta { color: #667eea; font-size: 12px; font-weight: 600; text-transform: uppercase; }
+  .claim-text { margin: 6px 0 10px; }
+  .evidence-line { background: #f8f9fa; border-left: 3px solid #aaa; padding: 8px 10px;
+                   margin-top: 6px; font-size: 13px; color: #555; }
+  .evidence-content { display: block; margin-top: 3px; color: #333; white-space: pre-wrap; }
+  .limitations { margin: 10px 0 0 20px; color: #666; }
 
   /* 底部 */
   .footer { text-align: center; margin-top: 40px; color: #999; font-size: 14px;
@@ -236,6 +243,34 @@
       </div>
       <br><strong>总结：</strong>{{.AIResult.Summary}}
     </div>
+  </div>
+  {{end}}
+
+  {{if .Claims}}
+  <div class="card">
+    <h2>🔎 可解释结论</h2>
+    {{with .EvidenceSampling}}
+    <p class="note">所有结论仅基于入选样本：本地脱敏样本 {{.SelectedMessages}} / {{.CandidateMessages}} 条、{{.SelectedChars}} / {{.CandidateChars}} 字符；时间覆盖 {{.StartTime}} 至 {{.EndTime}}；截断：{{if .Truncated}}是{{else}}否{{end}}。置信度为模型自评，不是统计置信度。</p>
+    {{end}}
+    {{with .EvidenceMeta}}
+    <p class="note">Prompt {{.PromptVersion}} · Provider {{.Provider}}{{range .Redactions}} · {{.Kind}}={{.Count}}{{end}}</p>
+    {{end}}
+    {{range .Claims}}
+    <div class="claim">
+      <div class="claim-meta">{{.Category}} · {{.Confidence}}</div>
+      <div class="claim-text">{{.Text}}</div>
+      {{range .Evidence}}
+      <div class="evidence-line">
+        <strong>{{.ID}}</strong> · {{.Speaker}} · {{.Time}}
+        {{if $.IncludeEvidenceContent}}<span class="evidence-content">{{.Content}}</span>{{end}}
+      </div>
+      {{end}}
+    </div>
+    {{end}}
+    {{if .AIResult.Limitations}}
+    <h3 style="font-size: 15px; margin-top: 18px;">分析局限</h3>
+    <ul class="limitations">{{range .AIResult.Limitations}}<li>{{.}}</li>{{end}}</ul>
+    {{end}}
   </div>
   {{end}}
 

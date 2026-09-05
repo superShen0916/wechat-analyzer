@@ -19,21 +19,45 @@ import (
 
 // HTMLReportData HTML 报告渲染数据
 type HTMLReportData struct {
-	Talker         string             `json:"talker"`
-	Stats          *stats.Stats       `json:"stats"`
-	AIResult       *ai.AnalysisResult `json:"ai_result"`
-	StartDate      string             `json:"start_date"`
-	EndDate        string             `json:"end_date"`
-	HourBars       []HourBar          `json:"hour_bars"`
-	MonthlyBars    []MonthlyBar       `json:"monthly_bars"`
-	IncludeContent bool               `json:"include_content"`
-	ReceivedRatio  float64            `json:"received_ratio"`
-	ExportedAt     string             `json:"exported_at"`
-	Today          string             `json:"today"`
+	Talker                 string              `json:"talker"`
+	Stats                  *stats.Stats        `json:"stats"`
+	AIResult               *ai.AnalysisResult  `json:"ai_result"`
+	Claims                 []ClaimView         `json:"claims,omitempty"`
+	EvidenceSampling       *ai.SamplingSummary `json:"evidence_sampling,omitempty"`
+	EvidenceMeta           *EvidenceReportMeta `json:"evidence_meta,omitempty"`
+	StartDate              string              `json:"start_date"`
+	EndDate                string              `json:"end_date"`
+	HourBars               []HourBar           `json:"hour_bars"`
+	MonthlyBars            []MonthlyBar        `json:"monthly_bars"`
+	IncludeContent         bool                `json:"include_content"`
+	IncludeEvidenceContent bool                `json:"include_evidence_content"`
+	ReceivedRatio          float64             `json:"received_ratio"`
+	ExportedAt             string              `json:"exported_at"`
+	Today                  string              `json:"today"`
 }
 
 type ReportOptions struct {
-	IncludeContent bool
+	IncludeContent         bool
+	IncludeEvidenceContent bool
+}
+
+// ClaimView connects a model claim to locally prepared evidence messages.
+type ClaimView struct {
+	Category   string
+	Text       string
+	Confidence string
+	Evidence   []ai.EvidenceMessage
+}
+
+type EvidenceReportMeta struct {
+	PromptVersion string
+	Provider      string
+	Redactions    []RedactionView
+}
+
+type RedactionView struct {
+	Kind  string
+	Count int
 }
 
 // HourBar contains presentation-ready values for one hour in the activity chart.
@@ -103,21 +127,26 @@ func GenerateHTMLReportWithOptions(outputDir string, conv *loader.Conversation, 
 			Y:      100 - height,
 		}
 	}
+	claims, sampling, evidenceMeta := buildClaimViews(aiResult)
 
 	// 准备数据
 	startDate, endDate := getDateRange(stats)
 	data := HTMLReportData{
-		Talker:         conv.Talker.DisplayName(),
-		Stats:          stats,
-		AIResult:       aiResult,
-		StartDate:      startDate,
-		EndDate:        endDate,
-		HourBars:       hourBars,
-		MonthlyBars:    monthlyBars,
-		IncludeContent: opts.IncludeContent,
-		ReceivedRatio:  100 - stats.SentRatio,
-		ExportedAt:     time.Now().Format(time.RFC3339),
-		Today:          time.Now().Format("2006-01-02"),
+		Talker:                 conv.Talker.DisplayName(),
+		Stats:                  stats,
+		AIResult:               aiResult,
+		Claims:                 claims,
+		EvidenceSampling:       sampling,
+		EvidenceMeta:           evidenceMeta,
+		StartDate:              startDate,
+		EndDate:                endDate,
+		HourBars:               hourBars,
+		MonthlyBars:            monthlyBars,
+		IncludeContent:         opts.IncludeContent,
+		IncludeEvidenceContent: opts.IncludeEvidenceContent,
+		ReceivedRatio:          100 - stats.SentRatio,
+		ExportedAt:             time.Now().Format(time.RFC3339),
+		Today:                  time.Now().Format("2006-01-02"),
 	}
 
 	funcMap := template.FuncMap{
@@ -142,6 +171,37 @@ func GenerateHTMLReportWithOptions(outputDir string, conv *loader.Conversation, 
 	}
 
 	return outputPath, nil
+}
+
+func buildClaimViews(result *ai.AnalysisResult) ([]ClaimView, *ai.SamplingSummary, *EvidenceReportMeta) {
+	if result == nil || result.Evidence == nil {
+		return nil, nil, nil
+	}
+	byID := make(map[string]ai.EvidenceMessage, len(result.Evidence.Messages))
+	for _, message := range result.Evidence.Messages {
+		byID[message.ID] = message
+	}
+	views := make([]ClaimView, 0, len(result.Claims))
+	for _, claim := range result.Claims {
+		view := ClaimView{Category: claim.Category, Text: claim.Text, Confidence: claim.Confidence}
+		for _, id := range claim.EvidenceIDs {
+			if message, ok := byID[id]; ok {
+				view.Evidence = append(view.Evidence, message)
+			}
+		}
+		views = append(views, view)
+	}
+	sampling := result.Evidence.Sampling
+	redactionKeys := make([]string, 0, len(result.Evidence.Redactions))
+	for key := range result.Evidence.Redactions {
+		redactionKeys = append(redactionKeys, key)
+	}
+	sort.Strings(redactionKeys)
+	meta := &EvidenceReportMeta{PromptVersion: result.PromptVersion, Provider: result.Provider}
+	for _, key := range redactionKeys {
+		meta.Redactions = append(meta.Redactions, RedactionView{Kind: key, Count: result.Evidence.Redactions[key]})
+	}
+	return views, &sampling, meta
 }
 
 func formatDuration(value any) string {

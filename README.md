@@ -13,9 +13,10 @@ A local-first Go CLI for turning exported WeChat conversations into useful stati
   - active streaks, monthly trends, and period-over-period comparison
   - stable JSON output for scripts and downstream visualizations
 - **Optional AI analysis**
-  - personality summary and tags
-  - relationship / communication-pattern analysis
-  - recurring topics and a short overall summary
+  - aggregate-only analysis by default: no message text is sent
+  - opt-in evidence analysis with deterministic sampling and local redaction
+  - locally validated claims that cite stable evidence IDs
+  - a no-network preview of the exact redacted Evidence Bundle
 - **HTML reports**
   - responsive, dependency-free visualizations
   - a single HTML file that can be viewed locally without network requests
@@ -29,10 +30,20 @@ The tool is local-first, but the privacy boundary depends on the command you run
 
 - `stats` and local HTML report generation can run entirely on your machine; the exported conversation file does not need to be sent to a third party.
 - HTML and JSON output exclude message text by default. `--include-content` explicitly adds the longest-message text; do not use it for a report you intend to share unless you have reviewed the output.
-- `analyze` calls the LLM provider you configure. The analysis context required for that request is sent to that provider and is therefore subject to the provider's privacy and data-retention policy.
+- The default `analyze` mode sends aggregate statistics, not message text, to the configured LLM provider.
+- `analyze --evidence` is an explicit opt-in to send a deterministic sample of locally redacted text excerpts. Use `--preview` first to inspect the exact bundle without an API key or network request.
+- In evidence mode, `--include-content` affects only local JSON/HTML output: it embeds the already-redacted excerpts, never the original `TopMessages` text.
 - API keys are read from environment variables. `wechat-analyzer` does not provide a hosted backend of its own.
 
-If you want a fully local workflow, use the statistics/reporting path without AI analysis.
+Redaction is best-effort. v0.3 recognizes mainland China phone numbers, email addresses,
+18-digit ID-card patterns, `wxid` values, and URL query strings. It cannot reliably find
+every name, address, account number, or context-specific identifier. Prompt data is JSON
+encoded and the system instruction treats excerpts as untrusted input, but this reduces
+rather than eliminates prompt-injection risk. Review the preview and your provider's data
+policy before enabling evidence mode.
+
+If you want a fully local workflow, use statistics/reporting or evidence preview without a
+live AI request.
 
 ## Report preview
 
@@ -138,6 +149,47 @@ wechat-analyzer analyze ./output/张三.json --html --output ./reports
 wechat-analyzer analyze ./output/张三.json --provider deepseek --format json
 ```
 
+There are two AI modes:
+
+| Mode | Sent to the provider | Result contract |
+| --- | --- | --- |
+| default | aggregate counts, ratios, periods, and activity windows | compatible free-text personality summary |
+| `--evidence` | aggregate facts plus locally redacted sampled excerpts | strict JSON, validated claims, evidence IDs, limitations, and prompt version |
+
+Preview evidence locally before sending anything:
+
+```bash
+# No API key is required; no provider client or network request is created
+wechat-analyzer analyze ./output/张三.json --evidence --preview
+
+# Produce a machine-readable v0.3 preview envelope
+wechat-analyzer analyze ./output/张三.json --evidence --preview --format json
+```
+
+Run evidence-backed analysis after reviewing the preview:
+
+```bash
+# Defaults: at most 80 text messages and 12,000 Unicode characters
+wechat-analyzer analyze ./output/张三.json --evidence --provider deepseek
+
+# Tune the deterministic sampling budget
+wechat-analyzer analyze ./output/张三.json --evidence \
+  --evidence-messages 120 --evidence-chars 20000
+
+# JSON/HTML contains evidence IDs but hides excerpt text by default
+wechat-analyzer analyze ./output/张三.json --evidence --html
+
+# Explicitly embed only the redacted excerpts in local JSON/HTML output
+wechat-analyzer analyze ./output/张三.json --evidence --html --include-content
+```
+
+Evidence selection keeps non-empty text messages, stably orders them by time, and uses an
+even timeline sample when the budget is exceeded. If both speakers have candidate messages,
+the sample includes both. Local IDs such as `m0001` are created after sampling; original
+WeChat message IDs, source paths, and contact identifiers are not included in the evidence
+payload. A model-reported `low`, `medium`, or `high` confidence is a self-assessment, not a
+statistical confidence interval, and every conclusion applies only to the selected sample.
+
 ## Relationship metric definitions
 
 - Messages are copied and stably sorted by `create_time` before analysis; the input data is never reordered in place.
@@ -196,9 +248,9 @@ The current parser expects the JSON format produced by `wechat-export`, for exam
 
 ## Reports
 
-Statistics and AI analysis can both produce a single self-contained HTML file. The report embeds its visualizations and does not load scripts, fonts, or other assets from the network.
+Statistics and AI analysis can both produce a single self-contained HTML file. The report embeds its visualizations and does not load scripts, fonts, or other assets from the network. Evidence reports connect each validated claim to local evidence IDs and state the sample coverage and limitations.
 
-The report includes session, response, initiator, active-streak, and monthly-trend views. Message text is hidden by default. Pass `--include-content` only when you explicitly want the longest messages embedded in the file; those messages remain readable by anyone who receives the report.
+The report includes session, response, initiator, active-streak, and monthly-trend views. Message text is hidden by default. In statistics and default aggregate reports, `--include-content` embeds the longest original messages. In evidence reports it suppresses those originals and embeds only the redacted evidence excerpts. Either form remains readable by anyone who receives the report, so review it before sharing.
 
 Default output directories are:
 
@@ -220,7 +272,7 @@ go test ./...
 go vet ./...
 ```
 
-CI runs tests and static checks on Linux, macOS, and Windows. The test suite covers JSON loading, statistics, provider detection, response parsing, and self-contained report generation.
+CI runs tests and static checks on Linux, macOS, and Windows. The test suite covers JSON loading, statistics, provider detection, deterministic evidence sampling and redaction, strict response validation, fake-provider request contracts, privacy projections, and self-contained report generation. AI tests use a local fake completion client and never access a provider network.
 
 ## Compatibility
 

@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/data-privacy.md", "reason": "检查显式授权、默认不发送正文和输出隐私"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "检查解析失败和供应商错误不泄露敏感内容"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查测试、lint、确定性和兼容性"}
+{"file": ".trellis/tasks/09-05-v0-3-explainable-ai/research/current-state.md", "reason": "对照已确认缺口做跨层验收"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "检查 preview/JSON 未混入颜色、原始响应或敏感诊断"}
